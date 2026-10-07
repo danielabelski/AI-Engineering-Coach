@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CodeBlock, Session, SessionRequest, Workspace } from './types';
+import { CodeBlock, Session, SessionRequest, Workspace, type CuriositySignal } from './types';
 import { SessionSource } from './cache';
 import { EditLocIndex } from './edit-loc-diff';
 import { classifyWorkType, LANG_ALIASES } from './helpers';
@@ -316,6 +316,10 @@ function textForCodeScan(text: string): string {
 
 /* ---- Factories ---- */
 
+let curiosityDetector: ((text: string) => CuriositySignal) | undefined;
+/** Only the parse worker loads NLP. Host-side detail reads do not run detection. */
+export function setCuriosityDetector(detector: typeof curiosityDetector): void { curiosityDetector = detector; }
+
 /** Context object passed through all directory-level parsing operations. */
 export interface ParseContext {
   workspaces: Map<string, Workspace>;
@@ -366,6 +370,11 @@ export function createRequest(overrides: Partial<SessionRequest> & Pick<SessionR
     userCode: overrides.userCode ?? extractCodeBlocks(textForCodeScan(rawMsg)),
     aiCode: overrides.aiCode ?? extractCodeBlocks(textForCodeScan(rawResp)),
     workType: overrides.workType || classifyWorkType(msg),
+    curiosity: overrides.curiosity ?? curiosityDetector?.(rawMsg),
+    answerEvidence: overrides.answerEvidence ?? (
+      rawResp.trim() && !overrides.isCanceled && overrides.endState !== 'pending' && overrides.endState !== 'errored'
+        ? 'legacy' : 'missing'
+    ),
   };
 }
 

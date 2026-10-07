@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Session } from './types';
-import { createSession, detectDevcontainerFromRequests, ParseContext, prefetchCache, stripSingleSession, maybeForceGc, addParseTiming } from './parser-shared';
+import { createSession, detectDevcontainerFromRequests, ParseContext, prefetchCache, stripSingleSession, maybeForceGc, addParseTiming, recordFailedFile } from './parser-shared';
 import { accumulateEditLoc, EditTimelineLike, InitialContentResolver } from './edit-loc-diff';
 import { debugCore, warnCore } from './log';
 import { canonicalizeReasoningEffort } from './helpers';
@@ -158,10 +158,6 @@ function listEditStateFiles(esDir: string): string[] {
   }
 }
 
-function sessionFileExists(filePath: string): boolean {
-  return prefetchCache.has(filePath) || fs.existsSync(filePath);
-}
-
 type EditState = {
   initialFileContents?: [string, string][];
   timeline?: EditTimelineLike;
@@ -260,6 +256,16 @@ function stripSessionsFrom(sessions: Session[], startIdx: number): void {
   for (let i = startIdx; i < sessions.length; i++) stripSingleSession(sessions[i]);
 }
 
+function hasCLIEvents(file: string): boolean {
+  try {
+    return fs.statSync(file, { throwIfNoEntry: false }) !== undefined;
+  } catch (error) {
+    recordFailedFile('parser-vscode', file, error);
+    warnCore('parser-vscode', `Cannot inspect events file ${file}`, error);
+    return false;
+  }
+}
+
 export function processWorkspaceEntry(
   logsDir: string,
   wsId: string,
@@ -272,7 +278,7 @@ export function processWorkspaceEntry(
 
   if (isCLI) {
     const eventsFile = path.join(entryPath, 'events.jsonl');
-    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
+    const cliSession = hasCLIEvents(eventsFile) ? parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex) : null;
     if (cliSession) {
       sessions.push(cliSession);
       sessionSourceIndex.set(cliSession.sessionId, {
@@ -303,18 +309,16 @@ export function processWorkspaceEntry(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  if (sessionFileExists(eventsFile)) {
-    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
-    if (cliSession) {
-      sessions.push(cliSession);
-      sessionSourceIndex.set(cliSession.sessionId, {
-        kind: 'cli-events',
-        filePath: eventsFile,
-        workspaceId: wsId,
-        workspaceName: wsName,
-        harness,
-      });
-    }
+  const cliSession = hasCLIEvents(eventsFile) ? parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex) : null;
+  if (cliSession) {
+    sessions.push(cliSession);
+    sessionSourceIndex.set(cliSession.sessionId, {
+      kind: 'cli-events',
+      filePath: eventsFile,
+      workspaceId: wsId,
+      workspaceName: wsName,
+      harness,
+    });
   }
 
   const esDir = path.join(entryPath, 'chatEditingSessions');
@@ -343,7 +347,7 @@ export async function processWorkspaceEntryAsync(
     const eventsFile = path.join(entryPath, 'events.jsonl');
     // Stream the events file asynchronously with byte progress, so a multi-GB events.jsonl keeps
     // the worker responsive and advances the host progress bar instead of freezing it (issue #106).
-    const cliSession = await parseCLIEventsFileAsync(
+    const cliSession = hasCLIEvents(eventsFile) ? await parseCLIEventsFileAsync(
       eventsFile,
       wsId,
       wsName,
@@ -358,7 +362,7 @@ export async function processWorkspaceEntryAsync(
         });
       },
       editLocIndex,
-    );
+    ) : null;
     if (cliSession) {
       sessions.push(cliSession);
       sessionSourceIndex.set(cliSession.sessionId, {
@@ -415,21 +419,19 @@ export async function processWorkspaceEntryAsync(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  if (sessionFileExists(eventsFile)) {
-    const tCli = Date.now();
-    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
-    addParseTiming('cli', Date.now() - tCli);
-    if (cliSession) {
-      stripSingleSession(cliSession);
-      sessions.push(cliSession);
-      sessionSourceIndex.set(cliSession.sessionId, {
-        kind: 'cli-events',
-        filePath: eventsFile,
-        workspaceId: wsId,
-        workspaceName: wsName,
-        harness,
-      });
-    }
+  const tCli = Date.now();
+  const cliSession = hasCLIEvents(eventsFile) ? parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex) : null;
+  addParseTiming('cli', Date.now() - tCli);
+  if (cliSession) {
+    stripSingleSession(cliSession);
+    sessions.push(cliSession);
+    sessionSourceIndex.set(cliSession.sessionId, {
+      kind: 'cli-events',
+      filePath: eventsFile,
+      workspaceId: wsId,
+      workspaceName: wsName,
+      harness,
+    });
   }
 
   for (let i = 0; i < editStateFiles.length; i++) {
