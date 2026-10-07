@@ -158,10 +158,6 @@ function listEditStateFiles(esDir: string): string[] {
   }
 }
 
-function sessionFileExists(filePath: string): boolean {
-  return prefetchCache.has(filePath) || fs.existsSync(filePath);
-}
-
 type EditState = {
   initialFileContents?: [string, string][];
   timeline?: EditTimelineLike;
