@@ -105,10 +105,12 @@ it('retains startup errors for RPC calls and clients that connect later', async 
   host.dispose();
 });
 
-it('waits for app.js to load before subscribing to replayed dataReady events', () => {
+it.each(['script', 'SCRIPT', 'Script'])('waits for app.js to load before subscribing to replayed dataReady events (%s tags)', (scriptTag) => {
   const host = createCanvasHost({ distDir: '/fixture/dist' });
-  const html = String(request(host, '/').end.mock.calls[0][0]);
-  const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1];
+  const html = String(request(host, '/').end.mock.calls[0][0])
+    .replaceAll('<script>', `<${scriptTag}>`)
+    .replaceAll('</script>', `</${scriptTag}>`);
+  const script = /<script>([\s\S]*?)<\/script>/i.exec(html)![1];
   const listeners = new Map<string, () => void>();
   const dispatchEvent = vi.fn();
   const streams: { onmessage?: (event: { data: string }) => void }[] = [];
