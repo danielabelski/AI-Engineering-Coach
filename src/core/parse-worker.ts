@@ -13,7 +13,8 @@ import { stripSessionsForMemory } from './cache';
 import { emitResultChunks, DEFAULT_SESSION_CHUNK_SIZE } from './parse-chunking';
 import { createAckWindow, shouldSendProgressImmediately } from './parse-worker-stream';
 import { parseAllLogsAsyncDetailed, type LoadProgress } from './parser';
-import { getParseWarningCounts, getParseWarnings } from './parser-shared';
+import { getParseWarningCounts, getParseWarnings, setCuriosityDetector } from './parser-shared';
+import { detectCuriosity } from './curiosity';
 import { installRuntimeDebugHooks, runtimeDebug } from './runtime-debug';
 import { createTelemetrySampler } from './worker-telemetry';
 
@@ -39,6 +40,7 @@ const port = parentPort;
 const canUseProcessChannel = typeof process.send === 'function';
 
 if (!port && !canUseProcessChannel) throw new Error('parse-worker: no parent channel');
+setCuriosityDetector(detectCuriosity);
 
 installRuntimeDebugHooks('parse-worker');
 runtimeDebug('parse-worker', port ? 'thread-started' : 'process-started');

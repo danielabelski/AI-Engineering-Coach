@@ -31,6 +31,7 @@ import {
   recordContentReplacement,
   recordCreatedContent,
 } from './edit-tool-diff';
+import { recordedInvestigation, recordedWebDomains } from './curiosity-activity';
 
 interface OcSession {
   id: string;
@@ -92,6 +93,9 @@ interface OpenCodeAssistantData {
   lastTs: number | null;
   tokenSource: OcMessage['tokens'] | null;
   editLocs: FileEditLocMap;
+  answerEvidence: SessionRequest['answerEvidence'];
+  investigationDelegations: ('research' | 'explore')[];
+  webDomains: string[];
 }
 
 const WRITE_TOOLS = new Set(['write', 'edit', 'create', 'patch', 'apply_patch']);
@@ -198,19 +202,19 @@ function getOpenCodeUserText(msg: OcMessage, partsByMsg: Map<string, OcPart[]>):
   return userTextFromParts || msg.summary?.title || '';
 }
 
-function findAssistantMessage(messages: OcMessage[], startIndex: number, parentId: string): OcMessage | null {
+function findAssistantMessages(messages: OcMessage[], startIndex: number): OcMessage[] {
+  const result: OcMessage[] = [];
   for (let i = startIndex; i < messages.length; i++) {
     const candidate = messages[i];
-    if (candidate.role === 'assistant' && candidate.parentID === parentId) return candidate;
+    if (candidate.role === 'user') break;
+    if (candidate.role === 'assistant') result.push(candidate);
   }
-
-  const next = messages[startIndex];
-  return next?.role === 'assistant' ? next : null;
+  return result;
 }
 
 function applyOpenCodePart(
   part: OcPart,
-  data: Pick<OpenCodeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'editLocs'>,
+  data: Pick<OpenCodeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'editLocs' | 'investigationDelegations' | 'webDomains'>,
   textParts: string[],
 ): void {
   if (part.type === 'text' && part.text) {
@@ -222,6 +226,9 @@ function applyOpenCodePart(
 
   data.toolsUsed.push(part.tool);
   const input = part.state?.input || {};
+  data.webDomains.push(...recordedWebDomains(part.tool, input));
+  const role = recordedInvestigation(part.tool, input);
+  if (role && !data.investigationDelegations.includes(role)) data.investigationDelegations.push(role);
   const toolLower = part.tool.toLowerCase();
   const toolSucceeded = part.state?.status === undefined || part.state.status === 'completed';
   if (!toolSucceeded && WRITE_TOOLS.has(toolLower)) return;
@@ -277,7 +284,7 @@ function applyOpenCodePart(
 }
 
 function collectAssistantData(
-  assistantMsg: OcMessage | null,
+  assistantMessages: OcMessage[],
   partsByMsg: Map<string, OcPart[]>,
   userTs: number | null,
   lastTs: number | null,
@@ -292,7 +299,11 @@ function collectAssistantData(
     lastTs,
     tokenSource: null,
     editLocs: new Map(),
+    answerEvidence: 'missing',
+    investigationDelegations: [],
+    webDomains: [],
   };
+  const assistantMsg = assistantMessages[0];
   if (!assistantMsg) return data;
 
   const assistantTs = assistantMsg.time?.completed || assistantMsg.time?.created || null;
@@ -303,9 +314,12 @@ function collectAssistantData(
   data.tokenSource = assistantMsg.tokens ?? null;
 
   const textParts: string[] = [];
-  const parts = partsByMsg.get(assistantMsg.id) || [];
-  for (const part of parts) {
-    applyOpenCodePart(part, data, textParts);
+  for (const message of assistantMessages) {
+    const parts = partsByMsg.get(message.id) || [];
+    const hasText = parts.some(part => part.type === 'text' && part.text?.trim());
+    data.answerEvidence = hasText && (message.finish === 'stop' || message.finish === 'end_turn') ? 'final'
+      : hasText && !message.finish && !parts.some(part => part.type === 'tool') ? 'legacy' : 'missing';
+    for (const part of parts) applyOpenCodePart(part, data, textParts);
   }
   data.responseText = textParts.join('\n');
 
@@ -356,6 +370,8 @@ function buildOpenCodeRequest(
 
   return createRequest({
     requestId: msg.id,
+    userEventId: msg.id,
+    answerEvidence: assistantData.answerEvidence,
     timestamp: userTs,
     messageText: getOpenCodeUserText(msg, partsByMsg),
     responseText: assistantData.responseText,
@@ -363,6 +379,8 @@ function buildOpenCodeRequest(
     agentMode: msg.agent || 'build',
     modelId: assistantData.modelId,
     toolsUsed: assistantData.toolsUsed,
+    investigationDelegations: assistantData.investigationDelegations,
+    webDomains: [...new Set(assistantData.webDomains)],
     editedFiles: hasSummaryDiffs
       ? [...exactLocs.keys()]
       : [...new Set([...assistantData.editedFiles, ...exactLocs.keys()])],
@@ -404,8 +422,8 @@ function buildOpenCodeSession(
     const userTs = msg.time?.created || null;
     if (userTs && (!firstTs || userTs < firstTs)) firstTs = userTs;
 
-    const assistantMsg = findAssistantMessage(rawMessages, i + 1, msg.id);
-    const assistantData = collectAssistantData(assistantMsg, partsByMsg, userTs, lastTs);
+    const assistantMessages = findAssistantMessages(rawMessages, i + 1);
+    const assistantData = collectAssistantData(assistantMessages, partsByMsg, userTs, lastTs);
     lastTs = assistantData.lastTs;
     requests.push(buildOpenCodeRequest(msg, partsByMsg, assistantData, userTs, editLocIndex));
   }

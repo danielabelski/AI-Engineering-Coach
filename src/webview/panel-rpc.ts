@@ -731,6 +731,10 @@ const rpcHandlers: TypedRpcHandlers = {
   getGitHubAppIssueCredits: () => loadGitHubAppIssueCredits(),
   getConfigHealth: (a, _p, params) => a.getConfigHealth(validateDateFilter(params)),
   getInsights: (a, _p, params) => a.getInsights(validateDateFilter(params)),
+  getCuriosity: (a, _p, params) => {
+    if (params.language !== undefined && !isString(params.language)) return errorResult('Invalid session language filter');
+    return a.getCuriosity({ ...validateDateFilter(params), ...(isString(params.language) ? { language: params.language } : {}) });
+  },
   getFlowState: (a, _p, params) => a.getFlowState(validateDateFilter(params)),
   getContextManagement: (a, _p, params) => a.getContextManagement(validateDateFilter(isRecord(params?.filter) ? params.filter : params)),
   getWorkspaceContextSessions: (a, _p, params) => {

@@ -20,6 +20,7 @@ import { assertTrustedPath, extractCodeBlocks, createRequest, createSession, det
 import { fileUriToPath } from './helpers';
 import { EditLocIndex } from './edit-loc-diff';
 import { FileEditLocMap, recordContentReplacement } from './edit-tool-diff';
+import { recordedWebDomains } from './curiosity-activity';
 
 /* ---- Directory discovery ---- */
 
@@ -284,16 +285,22 @@ function processTurn(
     ? extractToolsFromRounds(assistantData.editAgentRounds)
     : [];
   accumulateXcodeFileEdits(assistantData?.fileEdits, turn.id, editLocIndex);
+  const webDomains = [...new Set((assistantData?.editAgentRounds ?? [])
+    .flatMap(round => (round.toolCalls ?? []).flatMap(call => recordedWebDomains(call.name ?? '', call.input))))];
 
   return createRequest({
     requestId: turn.id,
+    userEventId: turn.id,
     timestamp: turn.createdAt * 1000,
     messageText: userContent,
     responseText: assistantContent,
+    answerEvidence: assistantData?.content?.trim() && assistantData.turnStatus === 'completed' ? 'final'
+      : assistantData?.content?.trim() && !assistantData.turnStatus ? 'legacy' : 'missing',
     isCanceled: assistantData?.turnStatus === 'canceled',
     agentName: 'Copilot (Xcode)',
     agentMode: requestType || 'conversation',
     toolsUsed,
+    webDomains,
     editedFiles,
     referencedFiles,
     totalElapsed,

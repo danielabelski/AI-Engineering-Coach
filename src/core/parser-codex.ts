@@ -32,6 +32,7 @@ import {
   recordContentReplacement,
   recordCreatedContent,
 } from './edit-tool-diff';
+import { recordedToolFiles, recordedInvestigation, recordedWebDomains } from './curiosity-activity';
 
 interface CodexLine {
   type: string;
@@ -58,6 +59,8 @@ interface CodexParseState {
   currentUserMessage: string;
   currentAssistantTexts: string[];
   currentToolsUsed: string[];
+  investigationDelegations: ('research' | 'explore')[];
+  webDomains: string[];
   currentEditedFiles: string[];
   currentReferencedFiles: string[];
   currentSkillsUsed: string[];
@@ -65,6 +68,7 @@ interface CodexParseState {
   turnEffort: 'max' | 'high' | 'medium' | 'low' | null;
   turnStartTs: number | null;
   turnCanceled: boolean;
+  answerEvidence: 'final' | 'legacy' | 'missing';
   prevTotalInput: number;
   prevTotalOutput: number;
   curTotalInput: number;
@@ -143,6 +147,8 @@ function createCodexState(initialModel: string, editLocIndex?: EditLocIndex): Co
     currentUserMessage: '',
     currentAssistantTexts: [],
     currentToolsUsed: [],
+    investigationDelegations: [],
+    webDomains: [],
     currentEditedFiles: [],
     currentReferencedFiles: [],
     currentSkillsUsed: [],
@@ -150,6 +156,7 @@ function createCodexState(initialModel: string, editLocIndex?: EditLocIndex): Co
     turnEffort: null,
     turnStartTs: null,
     turnCanceled: false,
+    answerEvidence: 'missing',
     prevTotalInput: 0,
     prevTotalOutput: 0,
     curTotalInput: 0,
@@ -228,11 +235,14 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
     timestamp: state.turnStartTs,
     messageText: state.currentUserMessage,
     responseText,
+    answerEvidence: state.answerEvidence,
     isCanceled: state.turnCanceled,
     agentName: 'Codex',
     agentMode: 'agent',
     modelId: state.turnModel || defaultModel,
     toolsUsed: state.currentToolsUsed,
+    investigationDelegations: [...new Set(state.investigationDelegations)],
+    webDomains: [...new Set(state.webDomains)],
     editedFiles: [...new Set(state.currentEditedFiles)],
     referencedFiles: [...new Set(state.currentReferencedFiles)],
     skillsUsed: [...new Set(state.currentSkillsUsed)],
@@ -246,12 +256,15 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
   state.currentUserMessage = '';
   state.currentAssistantTexts = [];
   state.currentToolsUsed = [];
+  state.investigationDelegations = [];
+  state.webDomains = [];
   state.currentEditedFiles = [];
   state.currentReferencedFiles = [];
   state.currentSkillsUsed = [];
   state.turnStartTs = null;
   state.turnCanceled = false;
   state.currentEditLocs = new Map();
+  state.answerEvidence = 'missing';
 }
 
 function extractContentItems(value: unknown): CodexContentItem[] {
@@ -376,6 +389,7 @@ function handleUserMessageEvent(payload: Record<string, unknown>, state: CodexPa
 }
 
 function handleFunctionCallEvent(payload: Record<string, unknown>, state: CodexParseState): void {
+  state.answerEvidence = 'missing';
   const toolName = stringValue(payload.name) || 'unknown';
   state.currentToolsUsed.push(toolName);
 
@@ -383,13 +397,20 @@ function handleFunctionCallEvent(payload: Record<string, unknown>, state: CodexP
   const args = typeof rawArguments === 'string'
     ? parseJsonRecord(rawArguments)
     : recordValue(rawArguments) ?? null;
+  const role = recordedInvestigation(toolName, args);
+  if (role) state.investigationDelegations.push(role);
+  state.webDomains.push(...recordedWebDomains(toolName, args));
+  state.currentReferencedFiles.push(...recordedToolFiles(toolName, args).referenced);
   collectSkillsFromArgs(args, state);
   queueCodexWrite(toolName, rawArguments, args, codexCallId(payload), state);
 }
 
 function handleAssistantMessageEvent(payload: Record<string, unknown>, state: CodexParseState): void {
   const content = payload.content;
-  if (typeof content === 'string') state.currentAssistantTexts.push(content);
+  if (typeof content === 'string') {
+    state.currentAssistantTexts.push(content);
+    if (content.trim()) state.answerEvidence = payload.phase === 'final' ? 'final' : payload.phase == null ? 'legacy' : 'missing';
+  }
 }
 
 function handleTokenCountEvent(payload: Record<string, unknown>, state: CodexParseState): void {
@@ -429,6 +450,9 @@ function handleEventMsg(payload: Record<string, unknown>, state: CodexParseState
     handleCodexToolOutput(payload, state);
     return;
   }
+  if (eventType === 'task_complete' && typeof payload.last_agent_message === 'string' && payload.last_agent_message.trim()) {
+    state.answerEvidence = 'final';
+  }
   if (eventType === 'turn_aborted') state.turnCanceled = true;
 }
 
@@ -454,11 +478,16 @@ function handleUserResponseItem(payload: Record<string, unknown>, state: CodexPa
 
 function handleAssistantResponseItem(payload: Record<string, unknown>, state: CodexParseState): void {
   for (const item of extractContentItems(payload.content)) {
-    if (item.type === 'output_text' && item.text) state.currentAssistantTexts.push(item.text);
+    if (item.type === 'output_text' && item.text) {
+      state.currentAssistantTexts.push(item.text);
+      if (item.text.trim()) state.answerEvidence = payload.phase === 'final' || payload.channel === 'final' ? 'final'
+        : payload.phase == null && payload.channel == null ? 'legacy' : 'missing';
+    }
   }
 }
 
 function handleFunctionCallResponseItem(payload: Record<string, unknown>, state: CodexParseState): void {
+  state.answerEvidence = 'missing';
   const toolName = stringValue(payload.name);
   if (!toolName) return;
 
@@ -468,6 +497,10 @@ function handleFunctionCallResponseItem(payload: Record<string, unknown>, state:
   const args = typeof rawArguments === 'string'
     ? parseJsonRecord(rawArguments)
     : recordValue(rawArguments) ?? null;
+  const role = recordedInvestigation(toolName, args);
+  if (role) state.investigationDelegations.push(role);
+  state.webDomains.push(...recordedWebDomains(toolName, args));
+  state.currentReferencedFiles.push(...recordedToolFiles(toolName, args).referenced);
   collectSkillsFromArgs(args, state);
   queueCodexWrite(toolName, rawArguments, args, codexCallId(payload), state);
 }
@@ -476,6 +509,7 @@ function handleCustomToolCallResponseItem(payload: Record<string, unknown>, stat
   const toolName = stringValue(payload.name);
   if (!toolName) return;
   state.currentToolsUsed.push(toolName);
+  state.answerEvidence = 'missing';
   const input = stringValue(payload.input);
   queueCodexWrite(toolName, input, null, codexCallId(payload), state);
 }

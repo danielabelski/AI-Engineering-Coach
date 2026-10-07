@@ -28,6 +28,7 @@ import {
   recordContentReplacement,
   recordCreatedContent,
 } from './edit-tool-diff';
+import { recordedInvestigation, recordedWebDomains } from './curiosity-activity';
 
 interface ClaudeContentBlock {
   type: string;
@@ -44,6 +45,7 @@ interface ClaudeMessage {
   model?: string;
   content?: ClaudeContentBlock[] | string;
   usage?: Record<string, unknown>;
+  stop_reason?: string;
 }
 
 interface ClaudeLine {
@@ -64,6 +66,9 @@ interface ClaudeLine {
    *  Carried through so callers can roll subagent requests up into the
    *  parent session rather than treating them as standalone sessions. */
   isSidechain?: boolean;
+  isMeta?: boolean;
+  /** Set on the turn that replays a compacted conversation summary. */
+  isCompactSummary?: boolean;
   /** Subagent identifier on `subagents/` files. Present alongside
    *  `isSidechain: true`. Not used for billing math; surfaced for diagnostics. */
   agentId?: string;
@@ -101,6 +106,9 @@ interface ClaudeAssistantData {
   totalCacheWriteTokens: number;
   assistantCount: number;
   editLocs: FileEditLocMap;
+  answerEvidence: 'final' | 'legacy' | 'missing';
+  investigationDelegations: ('research' | 'explore')[];
+  webDomains: string[];
 }
 
 const CLAUDE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'MultiEditTool']);
@@ -147,6 +155,8 @@ function isClaudeLine(value: unknown): value is ClaudeLine {
   if (value.gitBranch !== undefined && typeof value.gitBranch !== 'string') return false;
   if (value.entrypoint !== undefined && typeof value.entrypoint !== 'string') return false;
   if (value.isSidechain !== undefined && typeof value.isSidechain !== 'boolean') return false;
+  if (value.isMeta !== undefined && typeof value.isMeta !== 'boolean') return false;
+  if (value.isCompactSummary !== undefined && typeof value.isCompactSummary !== 'boolean') return false;
   if (value.agentId !== undefined && typeof value.agentId !== 'string') return false;
   if (value.message !== undefined && !isClaudeMessage(value.message)) return false;
   return true;
@@ -232,12 +242,15 @@ function countClaudeImages(line: ClaudeLine): number {
 
 function applyClaudeToolBlock(
   block: ClaudeContentBlock,
-  data: Pick<ClaudeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'skillsUsed' | 'editLocs'>,
+  data: Pick<ClaudeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'skillsUsed' | 'editLocs' | 'investigationDelegations' | 'webDomains'>,
   failed: boolean,
 ): void {
   if (block.type !== 'tool_use' || !block.name) return;
 
   data.toolsUsed.push(block.name);
+  data.webDomains.push(...recordedWebDomains(block.name, block.input));
+  const role = recordedInvestigation(block.name, block.input);
+  if (role && !data.investigationDelegations.includes(role)) data.investigationDelegations.push(role);
   if (failed) return;
 
   // Claude Code's Skill tool: { name: 'Skill', input: { skill: '<name>', args: '...' } }
@@ -324,6 +337,9 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
     totalCacheWriteTokens: 0,
     assistantCount: 0,
     editLocs: new Map(),
+    answerEvidence: 'missing',
+    investigationDelegations: [],
+    webDomains: [],
   };
 
   const toolResults = collectClaudeToolResults(lines, startIndex);
@@ -332,6 +348,10 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
     const next = lines[i];
     if (next.type === 'user' && userHasText(next)) break;
     if (next.type === 'assistant') {
+      const blocks = toContentArray(next.message?.content);
+      const hasText = blocks.some(block => block.type === 'text' && block.text?.trim());
+      data.answerEvidence = hasText && next.message?.stop_reason === 'end_turn' ? 'final'
+        : hasText && next.message?.stop_reason == null && !blocks.some(block => block.type === 'tool_use') ? 'legacy' : 'missing';
       data.assistantCount++;
       const assistantTs = getTimestamp(next.timestamp);
       if (assistantTs && (!data.lastTs || assistantTs > data.lastTs)) data.lastTs = assistantTs;
@@ -673,6 +693,8 @@ function buildClaudeRequest(
   const requestId = line.uuid || `${line.sessionId ?? sessionId}:claude:${requestIndex}`;
   const request = createRequest({
     requestId,
+    userEventId: line.uuid,
+    answerEvidence: assistantData.answerEvidence,
     timestamp: userTs,
     messageText: getClaudeUserText(line),
     responseText: assistantData.assistantTexts.join('\n'),
@@ -680,6 +702,8 @@ function buildClaudeRequest(
     agentMode: 'agent',
     modelId: assistantData.model,
     toolsUsed: assistantData.toolsUsed,
+    investigationDelegations: assistantData.investigationDelegations,
+    webDomains: [...new Set(assistantData.webDomains)],
     editedFiles: [...new Set(assistantData.editedFiles)],
     referencedFiles: uniqueRefs,
     skillsUsed: [...skills],
@@ -690,6 +714,7 @@ function buildClaudeRequest(
     cacheReadTokens: assistantData.totalCacheReadTokens > 0 ? assistantData.totalCacheReadTokens : null,
     cacheWriteTokens: assistantData.totalCacheWriteTokens > 0 ? assistantData.totalCacheWriteTokens : null,
     reasoningEffort: extractReasoningEffortFromModelId(assistantData.model),
+    curiosity: line.isSidechain || line.isMeta || line.isCompactSummary ? { kind: 'excluded', excerpts: [] } : undefined,
   });
   mergeRequestEditLoc(editLocIndex, requestId, assistantData.editLocs);
   return request;
