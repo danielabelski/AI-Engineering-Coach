@@ -13,12 +13,12 @@ If you're a human, [`README.md`](README.md) is the better starting point.
 
 ## Tech stack
 
-- **Node** ≥ 20 (CI uses Node 22)
+- **Development Node** 22.18+ on Node 22 LTS (CI uses Node 22); Node 24 and 26+ also supported
 - **TypeScript** 6.0.3, strict mode
-- **VS Code engine** `^1.120.0` (`@types/vscode` 1.120.0)
+- **VS Code engine** `^1.125.0` (`@types/vscode` 1.125.0; independent of development Node)
 - **Bundler** esbuild 0.28.0 (`esbuild.mjs`, output → `dist/extension.js`)
-- **Tests** vitest 4.1.7 (unit + inline rule tests), Playwright 1.60.0 (e2e webview)
-- **Lint** eslint 10.4.0
+- **Tests** vitest 5.0.0 (unit + inline rule tests), Playwright 1.64.0 (e2e webview)
+- **Lint** eslint 10.12.0
 - **Docs site** Hugo (sources in `docs/content/`, published to `microsoft.github.io/AI-Engineering-Coach/`)
 
 ## Repository map

@@ -12,7 +12,8 @@ Produces `ai-engineer-coach-<version>.vsix` at the repo root, suitable for
 
 ## Prerequisites
 
-- Node.js (matches `engines.vscode` of `^1.120.0` from `package.json`; any recent LTS works).
+- Node.js 22 LTS (22.18.0 or newer) and npm; Node 24.x and Node 26+ also work.
+  This is a development requirement, separate from the extension's VS Code `^1.125.0` engine.
 - `npm ci` to install dependencies — do **not** use `npm install` for a packaging build, since
   the lockfile is the source of truth.
 - `vsce` is invoked through `npx`; no global install needed.

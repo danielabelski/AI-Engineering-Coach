@@ -1,7 +1,7 @@
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { describe, bench, afterAll } from 'vitest';
+import { describe, test, afterAll } from 'vitest';
 import { reconstructFromJsonl } from './parser-vscode-files';
 import { evaluateExpression, compileFilter } from './dsl/index';
 import { executePipeline, parsePipeline } from './rule-pipeline';
@@ -114,16 +114,16 @@ describe('JSONL Parser', () => {
     rmSync(benchTmpDir, { recursive: true, force: true });
   });
 
-  bench('reconstructFromJsonl - 100 lines', () => {
-    reconstructFromJsonl(smallFile);
+  test('reconstructFromJsonl - 100 lines', async ({ bench }) => {
+    await bench('reconstructFromJsonl', () => reconstructFromJsonl(smallFile)).run();
   });
 
-  bench('reconstructFromJsonl - 1000 lines', () => {
-    reconstructFromJsonl(medFile);
+  test('reconstructFromJsonl - 1000 lines', async ({ bench }) => {
+    await bench('reconstructFromJsonl', () => reconstructFromJsonl(medFile)).run();
   });
 
-  bench('reconstructFromJsonl - 10000 lines', () => {
-    reconstructFromJsonl(largeFile);
+  test('reconstructFromJsonl - 10000 lines', async ({ bench }) => {
+    await bench('reconstructFromJsonl', () => reconstructFromJsonl(largeFile)).run();
   });
 });
 
@@ -139,25 +139,28 @@ describe('DSL Evaluation', () => {
     isCanceled: false,
   };
 
-  bench('simple comparison: requestCount > 5', () => {
-    evaluateExpression('requestCount > 5', simpleCtx);
+  test('simple comparison: requestCount > 5', async ({ bench }) => {
+    await bench('evaluateExpression', () => evaluateExpression('requestCount > 5', simpleCtx)).run();
   });
 
-  bench('arithmetic: totalElapsed / 1000', () => {
-    evaluateExpression('totalElapsed / 1000', simpleCtx);
+  test('arithmetic: totalElapsed / 1000', async ({ bench }) => {
+    await bench('evaluateExpression', () => evaluateExpression('totalElapsed / 1000', simpleCtx)).run();
   });
 
-  bench('function call: length(editedFiles) > 0', () => {
-    evaluateExpression('length(editedFiles) > 0', complexCtx);
+  test('function call: length(editedFiles) > 0', async ({ bench }) => {
+    await bench('evaluateExpression', () => evaluateExpression('length(editedFiles) > 0', complexCtx)).run();
   });
 
-  bench('contains + AND: contains(messageText, "fix") AND length(editedFiles) > 0', () => {
-    evaluateExpression('contains(messageText, "fix") AND length(editedFiles) > 0', complexCtx);
+  test('contains + AND: contains(messageText, "fix") AND length(editedFiles) > 0', async ({ bench }) => {
+    await bench('evaluateExpression', () =>
+      evaluateExpression('contains(messageText, "fix") AND length(editedFiles) > 0', complexCtx)).run();
   });
 
-  bench('compileFilter with complex expression', () => {
-    const fn = compileFilter('length(toolsUsed) > 1 AND responseLength > 100');
-    fn(complexCtx);
+  test('compileFilter with complex expression', async ({ bench }) => {
+    await bench('compileFilter', () => {
+      const fn = compileFilter('length(toolsUsed) > 1 AND responseLength > 100');
+      return fn(complexCtx);
+    }).run();
   });
 });
 
@@ -173,25 +176,31 @@ describe('Rule Pipeline', () => {
     'ratio > 0.3',
   );
 
-  bench('simple match pipeline (50 requests)', () => {
-    const pipeline = parsePipeline(simpleRule);
-    const ctx: DetectorContext = { reqs, sessions, skipIdeDetectors: false };
-    executePipeline(pipeline, simpleRule, ctx);
+  test('simple match pipeline (50 requests)', async ({ bench }) => {
+    await bench('executePipeline', () => {
+      const pipeline = parsePipeline(simpleRule);
+      const ctx: DetectorContext = { reqs, sessions, skipIdeDetectors: false };
+      return executePipeline(pipeline, simpleRule, ctx);
+    }).run();
   });
 
-  bench('complex match pipeline (50 requests)', () => {
-    const pipeline = parsePipeline(complexRule);
-    const ctx: DetectorContext = { reqs, sessions, skipIdeDetectors: false };
-    executePipeline(pipeline, complexRule, ctx);
+  test('complex match pipeline (50 requests)', async ({ bench }) => {
+    await bench('executePipeline', () => {
+      const pipeline = parsePipeline(complexRule);
+      const ctx: DetectorContext = { reqs, sessions, skipIdeDetectors: false };
+      return executePipeline(pipeline, complexRule, ctx);
+    }).run();
   });
 
   const largeSessions = Array.from({ length: 50 }, (_, i) => makeSession(i, 10));
   const largeReqs = largeSessions.flatMap(s => s.requests) as unknown as SessionRequest[];
 
-  bench('pipeline with 500 requests', () => {
-    const pipeline = parsePipeline(complexRule);
-    const ctx: DetectorContext = { reqs: largeReqs, sessions: largeSessions, skipIdeDetectors: false };
-    executePipeline(pipeline, complexRule, ctx);
+  test('pipeline with 500 requests', async ({ bench }) => {
+    await bench('executePipeline', () => {
+      const pipeline = parsePipeline(complexRule);
+      const ctx: DetectorContext = { reqs: largeReqs, sessions: largeSessions, skipIdeDetectors: false };
+      return executePipeline(pipeline, complexRule, ctx);
+    }).run();
   });
 });
 
@@ -202,18 +211,24 @@ describe('Analyzer Throughput', () => {
   const sessions100 = Array.from({ length: 100 }, (_, i) => makeSession(i, 3));
   const sessions500 = Array.from({ length: 500 }, (_, i) => makeSession(i, 2));
 
-  bench('Analyzer.getStats - 10 sessions', () => {
-    const analyzer = new Analyzer(sessions10);
-    analyzer.getStats();
+  test('Analyzer.getStats - 10 sessions', async ({ bench }) => {
+    await bench('Analyzer.getStats', () => {
+      const analyzer = new Analyzer(sessions10);
+      return analyzer.getStats();
+    }).run();
   });
 
-  bench('Analyzer.getStats - 100 sessions', () => {
-    const analyzer = new Analyzer(sessions100);
-    analyzer.getStats();
+  test('Analyzer.getStats - 100 sessions', async ({ bench }) => {
+    await bench('Analyzer.getStats', () => {
+      const analyzer = new Analyzer(sessions100);
+      return analyzer.getStats();
+    }).run();
   });
 
-  bench('Analyzer.getStats - 500 sessions', () => {
-    const analyzer = new Analyzer(sessions500);
-    analyzer.getStats();
+  test('Analyzer.getStats - 500 sessions', async ({ bench }) => {
+    await bench('Analyzer.getStats', () => {
+      const analyzer = new Analyzer(sessions500);
+      return analyzer.getStats();
+    }).run();
   });
 });

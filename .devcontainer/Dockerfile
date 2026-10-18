@@ -9,4 +9,4 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright system dependencies for E2E tests
-RUN npx -y playwright@1.60.0 install-deps
+RUN npx -y playwright@1.64.0 install-deps

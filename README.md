@@ -82,7 +82,7 @@ npm run package
 Prerequisites:
 
 - VS Code
-- Node.js and npm
+- Node.js 22 LTS (22.18.0 or newer) and npm (see [development requirements](CONTRIBUTING.md#how-to-contribute))
 
 Steps:
 
