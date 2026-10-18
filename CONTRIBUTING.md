@@ -38,6 +38,19 @@ run them once with `npm run bench -- --run`.
 Database integration tests require the `sqlite3` command-line tool on `PATH`.
 After updating Playwright, run `npx playwright install chromium` before the end-to-end tests.
 
+### Regenerating the agentic workflow
+
+Run `npm run compile:workflows` after editing
+[`.github/workflows/issue-triage.md`](.github/workflows/issue-triage.md) or its action pins in
+[`.github/aw/actions-lock.json`](.github/aw/actions-lock.json). This optional task also requires
+Go 1.26.3+ and an authenticated GitHub CLI.
+
+The command builds the checksum-pinned gh-aw 0.79.8 source in a temporary directory, applying
+the action lock through the upstream `sync-action-pins` build mechanism, then compiles in
+strict mode. Compiler logic, agent versions, and container pins are unchanged. The prebuilt
+gh-aw 0.79.8 binary embeds older artifact-action versions and would overwrite these pins;
+use the repository command instead. Do not edit the generated `.lock.yml` manually.
+
 ## Reporting Issues
 
 Please use [GitHub Issues](https://github.com/microsoft/ai-engineer-coach/issues) to report bugs or

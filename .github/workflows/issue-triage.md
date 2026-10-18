@@ -47,7 +47,7 @@ source: githubnext/agentics/workflows/issue-triage.md@df35cf29fb856d1c3b8f023ed4
 
 # Agentic Triage
 
-<!-- Note - this file can be customized to your needs. Replace this section directly, or add further instructions here. After editing run 'gh aw compile' -->
+<!-- Note - this file can be customized to your needs. Replace this section directly, or add further instructions here. After editing run 'npm run compile:workflows' to preserve the repository's action pins. -->
 
 You are a triage assistant for GitHub issues. Your task is to analyze issue #${{ github.event.issue.number }}, categorize it with the right metadata, and help maintainers act quickly. Your triage comments are written for maintainers reviewing the triage, not for the issue author.
 

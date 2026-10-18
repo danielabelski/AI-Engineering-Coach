@@ -294,6 +294,7 @@
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
+    "compile:workflows": "node scripts/compile-agentic-workflows.mjs",
     "lint": "eslint src/",
     "bench": "vitest bench",
     "test": "vitest run",
