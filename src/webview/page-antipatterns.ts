@@ -16,6 +16,7 @@ import { renderCoverageHeatmap } from './page-antipatterns-heatmap';
 import { openRuleEditor, wireRuleEditorModal } from './page-antipatterns-editor';
 import { renderDslReferenceContent } from './page-dsl-reference';
 import { llmAvailable } from './capabilities';
+import { explainOccurrence } from './occurrence-explain';
 
 /* ── Interfaces ── */
 
@@ -651,56 +652,6 @@ function renderFindings(
 
   // Wire AI "Why?" explainer buttons (delegated)
   wireExplainButtons(container, _apData);
-}
-
-async function explainOccurrence(
-  button: HTMLButtonElement,
-  filter?: DateFilter,
-): Promise<void> {
-  const ruleId = getDatasetValue(button, 'ruleId');
-  const sessionId = getDatasetValue(button, 'sessionId');
-  if (!ruleId || !sessionId) return;
-
-  const row = button.closest<HTMLElement>('.occ-session-row');
-  const resultDiv = row?.querySelector<HTMLElement>('.occ-explain-result');
-  if (!resultDiv) return;
-
-  if (resultDiv.style.display === '' && resultDiv.dataset.loaded === 'true') {
-    resultDiv.style.display = 'none';
-    return;
-  }
-
-  button.disabled = true;
-  button.textContent = 'Thinking...';
-  resultDiv.style.display = '';
-  resultDiv.className = 'occ-explain-result occ-explain-loading';
-  resultDiv.textContent = 'Asking AI for an explanation...';
-
-  try {
-    const request: { ruleId: string; sessionId: string; filter?: Record<string, unknown> } = {
-      ruleId,
-      sessionId,
-    };
-    if (filter) {
-      request.filter = filter as Record<string, unknown>;
-    }
-    const res = await rpc<{ ok: boolean; explanation: string; error?: string }>('explainOccurrence', request);
-    if (res.ok) {
-      resultDiv.className = 'occ-explain-result occ-explain-ok';
-      const lines = res.explanation.split('\n');
-      render(html`<span>${lines.map((line, i) => html`<span>${line}${i < lines.length - 1 ? html`<br/>` : null}</span>`)}</span>`, resultDiv);
-      resultDiv.dataset.loaded = 'true';
-    } else {
-      resultDiv.className = 'occ-explain-result occ-explain-error';
-      resultDiv.textContent = res.error || 'Failed to get explanation.';
-    }
-  } catch (err: unknown) {
-    resultDiv.className = 'occ-explain-result occ-explain-error';
-    resultDiv.textContent = err instanceof Error ? err.message : String(err);
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Why?';
-  }
 }
 
 function wireExplainButtons(container: HTMLElement, _apData: ApData): void {

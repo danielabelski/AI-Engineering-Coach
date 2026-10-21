@@ -18,7 +18,7 @@ import { updateTelemetry } from './telemetry-strip';
 import { formatStatCount } from './loading-grid-model';
 import { renderWorkspaceGrid, updateWorkspaceCell } from './loading-grid-view';
 import { buildSkippedBanner } from './skipped-banner';
-import { loadCapabilities, llmAvailable } from './capabilities';
+import { loadCapabilities, llmAvailable, onCapabilitiesChanged } from './capabilities';
 import { html, render, unmount, ComponentChildren } from './render';
 import { renderDashboard } from './page-dashboard';
 import { renderPatterns } from './page-patterns';
@@ -60,6 +60,8 @@ if (!FF_TOKEN_REPORTING_ENABLED) {
 let currentPage = new URLSearchParams(window.location.search).get('page') === 'curiosity' ? 'curiosity' : 'dashboard';
 const currentFilter: DateFilter = {};
 let _dataIsReady = false;
+/** Set once the first page has rendered with loaded capabilities; later capability pushes re-render. */
+let initialNavigationDone = false;
 let matchedWorkspaceId: string | undefined;
 
 /** Last parse-warning counts seen in worker telemetry, used to surface a post-load banner. */
@@ -396,11 +398,25 @@ function onDataReady(currentWorkspace: string, skipped?: { skippedFiles: number;
   }).catch(() => {});
 
   void Promise.allSettled([refreshGitHubAppSnapshot(), loadCapabilities()]).then(() => {
+    applyLlmNavVisibility();
     navigateTo(currentPage);
+    initialNavigationDone = true;
     refreshNavBadges(currentFilter);
     maybeShowSkippedBanner();
   });
 }
+
+/* ---- Language-model gating: Skill Finder and Level Up need GitHub Copilot ---- */
+function applyLlmNavVisibility(): void {
+  for (const item of $$<HTMLElement>('.llm-nav-item')) item.hidden = !llmAvailable();
+}
+
+// The VS Code host pushes capability changes (e.g. Copilot sign-in/out) after load;
+// re-render so Why? buttons, Skill Finder, and Context Review follow availability.
+onCapabilitiesChanged(() => {
+  applyLlmNavVisibility();
+  if (initialNavigationDone) navigateTo(currentPage);
+});
 
 /** After load, if any session files failed to parse, show a compact, dismissible notice above the
  *  page so the partial result is discoverable. A "View details" link reveals the "AI Engineer

@@ -6,8 +6,10 @@
 /* LLM schemas and request helpers for the dashboard panel. */
 
 import * as vscode from 'vscode';
+import { COPILOT_LM_JUSTIFICATION } from '../core/copilot-model';
 import { runtimeDebug } from '../core/runtime-debug';
 import { redactSecrets } from '../core/redact-secrets';
+import { permanentFailureMessage, selectModel, withTimeout } from './panel-llm-model';
 
 export interface JsonSchemaSpec {
   name: string;
@@ -328,37 +330,13 @@ function balanceTruncatedJson(input: string): string {
 }
 
 const LLM_MAX_RETRIES = 2;
-const LLM_FAMILY = 'gpt-5.4-mini';
 /** Hard cap for a single LLM streaming request (ms). Prevents the UI from
- *  spinning forever when the model hangs or the user never grants consent. */
+ *  spinning forever when the model hangs or the user never answers the consent dialog. */
 const LLM_REQUEST_TIMEOUT_MS = 90_000;
-
-/**
- * Pick a Copilot chat model. Tries the preferred family first, then a short
- * fallback list, then any available model. Throws a descriptive error when
- * nothing is available so callers can surface a useful message.
- */
-async function selectModel(): Promise<vscode.LanguageModelChat> {
-  const families = [LLM_FAMILY, 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4.1'];
-  for (const family of families) {
-    const models = await vscode.lm.selectChatModels({ family });
-    if (models.length > 0) return models[0];
-  }
-  const any = await vscode.lm.selectChatModels({});
-  if (any.length > 0) return any[0];
-  throw new Error('No language model available. Make sure GitHub Copilot is installed and signed in.');
-}
-
-/** Race a promise against a timeout. Rejects with a clear message on timeout. */
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
-    p.then(v => { clearTimeout(t); resolve(v); }, e => {
-      clearTimeout(t);
-      reject(e instanceof Error ? e : new Error(String(e)));
-    });
-  });
-}
+/** Overall budget for one `callLlm`, retries included. Stays well under the
+ *  webview's 300s LLM RPC timeout so callers always get an answer or an error. */
+const LLM_TOTAL_BUDGET_MS = 120_000;
+const EMPTY_RESPONSE_MESSAGE = 'GitHub Copilot returned an empty response. Try again.';
 
 /**
  * Redact credential-shaped substrings from every message before it leaves for the
@@ -376,38 +354,61 @@ function redactMessages(messages: vscode.LanguageModelChatMessage[]): vscode.Lan
   });
 }
 
+/**
+ * Send a plain-text request to GitHub Copilot and return the non-empty reply.
+ * Transient failures and empty replies are retried within an overall budget;
+ * timeouts, permission/quota errors, and cancellation fail immediately so the
+ * caller always gets an answer or an actionable error well before the
+ * webview's RPC timeout.
+ */
 export async function callLlm(messages: vscode.LanguageModelChatMessage[]): Promise<string> {
   const safeMessages = redactMessages(messages);
   const model = await selectModel();
+  const deadline = Date.now() + LLM_TOTAL_BUDGET_MS;
 
   let lastError: unknown;
   for (let attempt = 0; attempt <= LLM_MAX_RETRIES; attempt++) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
     const cts = new vscode.CancellationTokenSource();
     try {
       const streamText = async () => {
-        const response = await model.sendRequest(safeMessages, {}, cts.token);
+        const response = await model.sendRequest(safeMessages, { justification: COPILOT_LM_JUSTIFICATION }, cts.token);
         let text = '';
         for await (const chunk of response.text) text += chunk;
         return text;
       };
-      return await withTimeout(streamText(), LLM_REQUEST_TIMEOUT_MS, 'LLM request');
+      const timeoutMs = Math.min(LLM_REQUEST_TIMEOUT_MS, remainingMs);
+      const text = await withTimeout(
+        streamText(),
+        timeoutMs,
+        `GitHub Copilot did not respond within ${Math.round(timeoutMs / 1000)}s. Try again.`,
+      );
+      if (text.trim()) return text;
+      runtimeDebug('panel-llm', 'empty-response', `attempt=${attempt + 1} model=${model.id}`);
+      lastError = new Error(EMPTY_RESPONSE_MESSAGE);
     } catch (err) {
       cts.cancel();
-      lastError = err;
       if (err instanceof vscode.CancellationError) throw err;
+      const permanent = permanentFailureMessage(err);
+      runtimeDebug('panel-llm', 'call-failed',
+        `attempt=${attempt + 1} model=${model.id} retryable=${permanent === undefined} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`);
+      if (permanent) throw new Error(permanent, { cause: err });
+      lastError = err;
     } finally {
       cts.dispose();
     }
   }
-  throw lastError;
+  throw lastError instanceof Error ? lastError : new Error('GitHub Copilot request failed. Try again.');
 }
 
 export async function callLlmJson<T>(messages: vscode.LanguageModelChatMessage[], jsonSchema?: JsonSchemaSpec): Promise<T> {
   const model = await selectModel();
 
   const options: vscode.LanguageModelChatRequestOptions = jsonSchema
-    ? { modelOptions: structuredOutputOptions(jsonSchema) }
-    : {};
+    ? { justification: COPILOT_LM_JUSTIFICATION, modelOptions: structuredOutputOptions(jsonSchema) }
+    : { justification: COPILOT_LM_JUSTIFICATION };
 
   let lastError: unknown;
   let parseFailures = 0;
