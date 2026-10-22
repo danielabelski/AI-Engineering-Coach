@@ -17,3 +17,11 @@ export const COPILOT_AUTO_MODEL_SELECTOR = { vendor: 'copilot', id: 'auto' } as 
 /** Shown by VS Code in the one-time consent dialog for language model access. */
 export const COPILOT_LM_JUSTIFICATION =
   'AI Engineer Coach uses GitHub Copilot to explain anti-pattern detections, review context files, and generate skills, rules, and quizzes when you ask.';
+
+/**
+ * Upper bound for one Copilot-backed webview request on the extension host,
+ * including model selection and retries. The webview's timeout for these
+ * requests (`LLM_METHODS` in `src/webview/shared.ts`) must outlast it with room
+ * to deliver the reply, so the user always sees the answer or the error.
+ */
+export const COPILOT_REQUEST_BUDGET_MS = 120_000;

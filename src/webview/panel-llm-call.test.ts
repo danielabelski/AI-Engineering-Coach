@@ -58,6 +58,13 @@ function reply(...chunks: string[]) {
 
 const prompt = () => [vscode.LanguageModelChatMessage.User('Explain this session')];
 
+/** Start a call and record how it settles, so tests can check when it finished. */
+function track(call: Promise<string>): ReturnType<typeof vi.fn<(outcome: string) => void>> {
+  const outcome = vi.fn<(outcome: string) => void>();
+  call.then(text => outcome(`resolved: ${text}`), (err: unknown) => outcome(err instanceof Error ? err.message : String(err)));
+  return outcome;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.selectChatModels.mockResolvedValue([model]);
@@ -96,6 +103,65 @@ describe('Copilot Auto model selection', () => {
     await vi.advanceTimersByTimeAsync(15_000);
     await assertion;
     expect(mocks.sendRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('callLlm request budget', () => {
+  it('counts model selection toward the 120s budget', async () => {
+    vi.useFakeTimers();
+    mocks.selectChatModels.mockImplementation(() => new Promise(resolve => { setTimeout(() => resolve([model]), 14_000); }));
+    mocks.sendRequest
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error('upstream 502')), 80_000);
+      }))
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    const outcome = track(callLlm(prompt()));
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(outcome).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(outcome).toHaveBeenCalledWith('GitHub Copilot did not respond within 26s. Try again.');
+    expect(mocks.sendRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails at once when a shared deadline has already passed', async () => {
+    await expect(callLlm(prompt(), { deadline: Date.now() - 1 })).rejects.toThrow('GitHub Copilot did not respond in time');
+
+    expect(mocks.selectChatModels).not.toHaveBeenCalled();
+    expect(mocks.sendRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('callLlm shared deadlines', () => {
+  it('shares one deadline across calls that serve the same request', async () => {
+    vi.useFakeTimers();
+    mocks.sendRequest
+      .mockImplementationOnce(() => new Promise(resolve => { setTimeout(() => resolve(reply('First draft.')), 70_000); }))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const deadline = Date.now() + 120_000;
+
+    const first = track(callLlm(prompt(), { deadline }));
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(first).toHaveBeenCalledWith('resolved: First draft.');
+
+    const second = track(callLlm(prompt(), { deadline }));
+    await vi.advanceTimersByTimeAsync(49_999);
+    expect(second).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(second).toHaveBeenCalledWith('GitHub Copilot did not respond within 50s. Try again.');
+  });
+
+  it('bounds model selection by a shared deadline', async () => {
+    vi.useFakeTimers();
+    mocks.selectChatModels.mockReturnValue(new Promise(() => {}));
+
+    const outcome = track(callLlm(prompt(), { deadline: Date.now() + 5_000 }));
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(outcome).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(outcome).toHaveBeenCalledWith('Timed out waiting for GitHub Copilot to load. Try again in a moment.');
   });
 });
 

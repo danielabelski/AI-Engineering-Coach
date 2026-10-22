@@ -6,10 +6,10 @@
 /* LLM schemas and request helpers for the dashboard panel. */
 
 import * as vscode from 'vscode';
-import { COPILOT_LM_JUSTIFICATION } from '../core/copilot-model';
+import { COPILOT_LM_JUSTIFICATION, COPILOT_REQUEST_BUDGET_MS } from '../core/copilot-model';
 import { runtimeDebug } from '../core/runtime-debug';
 import { redactSecrets } from '../core/redact-secrets';
-import { permanentFailureMessage, selectModel, withTimeout } from './panel-llm-model';
+import { LLM_OUT_OF_TIME_MESSAGE, permanentFailureMessage, selectModel, withTimeout } from './panel-llm-model';
 
 export interface JsonSchemaSpec {
   name: string;
@@ -333,10 +333,22 @@ const LLM_MAX_RETRIES = 2;
 /** Hard cap for a single LLM streaming request (ms). Prevents the UI from
  *  spinning forever when the model hangs or the user never answers the consent dialog. */
 const LLM_REQUEST_TIMEOUT_MS = 90_000;
-/** Overall budget for one `callLlm`, retries included. Stays well under the
- *  webview's 300s LLM RPC timeout so callers always get an answer or an error. */
-const LLM_TOTAL_BUDGET_MS = 120_000;
 const EMPTY_RESPONSE_MESSAGE = 'GitHub Copilot returned an empty response. Try again.';
+
+/** Deadline (epoch ms) for a Copilot-backed webview request that starts now. */
+export function llmDeadline(): number {
+  return Date.now() + COPILOT_REQUEST_BUDGET_MS;
+}
+
+export interface LlmCallOptions {
+  /**
+   * Time (epoch ms) by which the call must settle, model selection and retries
+   * included. Defaults to a fresh {@link llmDeadline}. A handler that calls the
+   * model several times for one webview request passes the same deadline to
+   * every call, so the whole request stays within the budget.
+   */
+  deadline?: number;
+}
 
 /**
  * Redact credential-shaped substrings from every message before it leaves for the
@@ -356,15 +368,15 @@ function redactMessages(messages: vscode.LanguageModelChatMessage[]): vscode.Lan
 
 /**
  * Send a plain-text request to GitHub Copilot and return the non-empty reply.
- * Transient failures and empty replies are retried within an overall budget;
- * timeouts, permission/quota errors, and cancellation fail immediately so the
- * caller always gets an answer or an actionable error well before the
- * webview's RPC timeout.
+ * Model selection, transient failures, and empty replies all count against one
+ * deadline (see {@link LlmCallOptions}); timeouts, permission/quota errors, and
+ * cancellation fail immediately. The caller therefore always gets an answer or
+ * an actionable error before the webview's RPC timeout.
  */
-export async function callLlm(messages: vscode.LanguageModelChatMessage[]): Promise<string> {
+export async function callLlm(messages: vscode.LanguageModelChatMessage[], options: LlmCallOptions = {}): Promise<string> {
+  const deadline = options.deadline ?? llmDeadline();
   const safeMessages = redactMessages(messages);
-  const model = await selectModel();
-  const deadline = Date.now() + LLM_TOTAL_BUDGET_MS;
+  const model = await selectModel(deadline - Date.now());
 
   let lastError: unknown;
   for (let attempt = 0; attempt <= LLM_MAX_RETRIES; attempt++) {
@@ -382,7 +394,7 @@ export async function callLlm(messages: vscode.LanguageModelChatMessage[]): Prom
       const text = await withTimeout(
         streamText(),
         timeoutMs,
-        `GitHub Copilot did not respond within ${Math.round(timeoutMs / 1000)}s. Try again.`,
+        `GitHub Copilot did not respond within ${Math.ceil(timeoutMs / 1000)}s. Try again.`,
       );
       if (text.trim()) return text;
       runtimeDebug('panel-llm', 'empty-response', `attempt=${attempt + 1} model=${model.id}`);
@@ -400,7 +412,8 @@ export async function callLlm(messages: vscode.LanguageModelChatMessage[]): Prom
       cts.dispose();
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('GitHub Copilot request failed. Try again.');
+  if (lastError instanceof Error) throw lastError;
+  throw new Error(lastError === undefined ? LLM_OUT_OF_TIME_MESSAGE : 'GitHub Copilot request failed. Try again.');
 }
 
 export async function callLlmJson<T>(messages: vscode.LanguageModelChatMessage[], jsonSchema?: JsonSchemaSpec): Promise<T> {

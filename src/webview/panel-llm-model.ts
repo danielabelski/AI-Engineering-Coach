@@ -17,6 +17,7 @@ const MODEL_SELECT_TIMEOUT_MS = 15_000;
 
 export const COPILOT_UNAVAILABLE_MESSAGE =
   "GitHub Copilot isn't available. Sign in to GitHub Copilot in VS Code to use AI features.";
+export const LLM_OUT_OF_TIME_MESSAGE = 'GitHub Copilot did not respond in time. Try again.';
 
 /** Failures that a retry cannot fix, keyed by `LanguageModelError.code`. */
 const PERMANENT_LM_ERROR_MESSAGES: Readonly<Record<string, string>> = {
@@ -43,12 +44,14 @@ export function withTimeout<T>(p: PromiseLike<T>, ms: number, message: string): 
 /**
  * Pick GitHub Copilot's Auto model, the only model source the extension uses.
  * Throws an actionable error when Copilot is unavailable (signed out, disabled)
- * or the provider does not load in time.
+ * or the provider does not load within `budgetMs` (capped at 15s), so a
+ * caller's overall request budget also bounds model selection.
  */
-export async function selectModel(): Promise<vscode.LanguageModelChat> {
+export async function selectModel(budgetMs = MODEL_SELECT_TIMEOUT_MS): Promise<vscode.LanguageModelChat> {
+  if (budgetMs <= 0) throw new LlmTimeoutError(LLM_OUT_OF_TIME_MESSAGE);
   const models = await withTimeout(
     vscode.lm.selectChatModels(COPILOT_AUTO_MODEL_SELECTOR),
-    MODEL_SELECT_TIMEOUT_MS,
+    Math.min(MODEL_SELECT_TIMEOUT_MS, budgetMs),
     'Timed out waiting for GitHub Copilot to load. Try again in a moment.',
   );
   const model = models[0];
