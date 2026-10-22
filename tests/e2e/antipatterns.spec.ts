@@ -223,22 +223,41 @@ test.describe('Anti-Patterns Why? explanations', () => {
     await expect(result).toHaveClass(/occ-explain-error/);
   });
 
-  test('follows GitHub Copilot availability pushed by the host', async ({ page }) => {
-    await showGiantPromptOccurrence(page);
+  test('updates AI controls in place when GitHub Copilot availability changes', async ({ page }) => {
+    const finding = await showGiantPromptOccurrence(page);
+    const why = finding.locator('.occ-explain-btn');
+    const occurrences = finding.locator('.ap-occurrences');
     const skills = page.locator('#sidebar [data-page="skills"]');
     const levelUp = page.locator('#sidebar [data-page="level-up"]');
-    await expect(page.locator('.occ-explain-btn')).toHaveCount(1);
+    await expect(why).toBeVisible();
     await expect(skills).toBeVisible();
 
     await pushCapabilities(page, false);
-    await expect(page.locator('.occ-explain-btn')).toHaveCount(0);
+    await expect(why).toBeHidden();
     await expect(skills).toBeHidden();
     await expect(levelUp).toBeHidden();
-    await expect(page.locator('#content h1')).toHaveText('Anti-Patterns');
+    // The page is not rebuilt: the expanded occurrence list stays open.
+    await expect(occurrences).toHaveAttribute('open', '');
 
     await pushCapabilities(page, true);
+    await expect(why).toBeVisible();
     await expect(skills).toBeVisible();
     await expect(levelUp).toBeVisible();
-    await expect(page.locator('.occ-explain-btn')).toHaveCount(1);
+    await expect(occurrences).toHaveAttribute('open', '');
+  });
+
+  test('keeps an unsaved Rule Editor draft when GitHub Copilot availability changes', async ({ page }) => {
+    await page.locator('.ap-tab[data-tab="rules"]').click();
+    await page.locator('#rule-new-btn').click();
+    const modal = page.locator('#rule-editor-modal');
+    const name = page.locator('#rf-name');
+    await expect(modal).toBeVisible();
+    await name.fill('Draft rule that must survive');
+
+    await pushCapabilities(page, false);
+    await pushCapabilities(page, true);
+
+    await expect(modal).toBeVisible();
+    await expect(name).toHaveValue('Draft rule that must survive');
   });
 });

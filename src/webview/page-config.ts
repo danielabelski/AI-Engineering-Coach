@@ -227,13 +227,14 @@ async function renderConfigQuality(container: HTMLElement, currentFilter: DateFi
           <option value="">All Harnesses</option>
           ${harnesses.map(h => html`<option value=${h} selected=${currentFilter.harness === h || undefined}>${h}</option>`)}
         </select>
-        <button id="ctxReviewBtn" style="padding:5px 14px;border-radius:6px;background:var(--accent-blue);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.15s;${llmAvailable() ? '' : 'opacity:0.45;cursor:not-allowed;'}" disabled=${!llmAvailable() || undefined} title=${llmAvailable() ? 'AI reviews your context files and scores them' : llmUnavailableNote()}>Review Context Files</button>
-        ${llmAvailable() ? html`<select id="ctxReviewCount" style="padding:4px 6px;border-radius:6px;background:var(--card-bg, #161b22);border:1px solid var(--border-color, #30363d);color:var(--text-primary, #c9d1d9);font-size:12px;" title="Number of workspaces to review">
+        <button id="ctxReviewBtn" class="llm-only" style="padding:5px 14px;border-radius:6px;background:var(--accent-blue);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" title="AI reviews your context files and scores them">Review Context Files</button>
+        <button class="llm-fallback" style="padding:5px 14px;border-radius:6px;background:var(--accent-blue);color:#fff;border:none;font-size:12px;font-weight:600;opacity:0.45;cursor:not-allowed;" disabled title=${llmUnavailableNote()}>Review Context Files</button>
+        <select id="ctxReviewCount" class="llm-only" style="padding:4px 6px;border-radius:6px;background:var(--card-bg, #161b22);border:1px solid var(--border-color, #30363d);color:var(--text-primary, #c9d1d9);font-size:12px;" title="Number of workspaces to review">
           <option value="3">Top 3</option>
           <option value="5" selected>Top 5</option>
           <option value="10">Top 10</option>
           <option value="15">Top 15</option>
-        </select>` : null}
+        </select>
       </div>
     </div>
     <div class="stat-grid">
