@@ -64,7 +64,8 @@ By default, desktop tests use the minimum version in `package.json`'s `engines.v
 Use `--vscode-version 1.125.0` to select an explicit compatible version, or
 `--vscode-version latest` to check the current stable release. An incompatible pinned version
 fails before launching. The [compatibility workflow](.github/workflows/vscode-compatibility.yml)
-runs the minimum and latest versions on Linux, Windows, and macOS weekly and on manual dispatch.
+runs the minimum and latest versions on Linux, Windows, and macOS weekly, on manual dispatch,
+and on PRs that change the desktop harness, its fixtures, or the shared E2E action.
 
 The desktop runner uses [ExTester](https://github.com/redhat-developer/vscode-extension-tester).
 Its actively tested editor-version window moves with new releases; older versions are
@@ -139,9 +140,11 @@ and assert exact results.
 After a meaningful assertion, use `await dashboard.snapshot('01-feature', 'What the screenshot demonstrates')`
 to add a named milestone to the gallery. Use a unique lowercase, hyphenated name within each suite.
 The desktop suite is sequential, has no automatic test retries, and rejects focused, skipped, or
-empty test runs. Reload replaces the webview's inner frame, so the dashboard helper waits for a
-different document and reacquires detached frames within a single deadline. It does not repeat
-the reload command or suppress unexpected driver failures.
+empty test runs. Inherited `MOCHA_GREP` and `MOCHA_INVERT` filters are removed so a nonempty subset
+cannot pass as the full suite. Reload replaces the webview's frames, so the dashboard helper waits
+for a different document and reacquires detached frames within a single deadline, including
+ExTester's wrapped stale-outer-frame error. It does not repeat the reload command or suppress
+unexpected driver failures.
 Its TypeScript and fixture tests are included in `npm run check`.
 
 Use the shared [E2E action](.github/actions/e2e/action.yml) for pipeline changes so PR, release,

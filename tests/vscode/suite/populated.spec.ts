@@ -82,8 +82,9 @@ describe('Packaged VSIX with synthetic sessions', () => {
     await addReloadFixture(root, timestamp);
     reloaded = true;
     await dashboard.command('Reload Data');
-    await dashboard.click('[data-page="dashboard"]');
+    // A replacement webview starts on Dashboard; its layout can still be loading.
     await dashboard.expectStats(RELOADED_COUNTS);
+    await dashboard.expectCount('#sidebar [data-page="dashboard"].active', 1);
     const log = fixturePaths(root).runtimeLog;
     const parsesBefore = (await fs.readFile(log, 'utf8')).match(/\[panel\] parse-complete/g)?.length ?? 0;
     await dashboard.command('Reload Data');

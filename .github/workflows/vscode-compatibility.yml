@@ -2,6 +2,11 @@ name: VS Code compatibility
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/vscode-compatibility.yml'
+      - '.github/actions/e2e/**'
+      - 'tests/vscode/**'
   schedule:
     - cron: '0 7 * * 1'
 

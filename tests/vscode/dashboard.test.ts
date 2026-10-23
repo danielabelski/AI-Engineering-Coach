@@ -68,6 +68,7 @@ describe('desktop webview synchronization', () => {
 
   it.each([
     ['stale frame', new error.StaleElementReferenceError('The inner frame was replaced')],
+    ['wrapped stale outer frame', new Error('WebviewMixin.switchToFrame: outer iframe became stale during frame switch. See the upstream issue.')],
     ['missing frame', new error.NoSuchFrameError('The inner frame was removed')],
     ['missing document', new error.NoSuchElementError('The document was removed')],
   ])('reacquires a %s without executing the reload command again', async (_name, failure) => {
@@ -166,6 +167,13 @@ describe('desktop webview failures', () => {
 
     await expect(new Dashboard().open()).rejects.toBe(failure);
 
+    expect(mocks.switchToFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a different ExTester frame error', async () => {
+    const failure = new Error('WebviewMixin.switchToFrame: active-frame iframe was not found within 60000ms.');
+    mocks.switchToFrame.mockRejectedValueOnce(failure);
+    await expect(new Dashboard().open()).rejects.toBe(failure);
     expect(mocks.switchToFrame).toHaveBeenCalledTimes(1);
   });
 });

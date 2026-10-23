@@ -126,7 +126,8 @@ describe('desktop test fixtures', () => {
   it('isolates every discovery root without mutating the parent environment', () => {
     const parent = { HOME: '/personal', USERPROFILE: '/personal', COPILOT_HOME: '/personal/copilot',
       VSCODE_PORTABLE: '/personal/code', VSCODE_IPC_HOOK_CLI: 'personal-socket', ELECTRON_RUN_AS_NODE: '1',
-      NODE_OPTIONS: '--inspect', CODE_VERSION: 'latest', PATH: '/tools' };
+      NODE_OPTIONS: '--inspect', CODE_VERSION: 'latest', PATH: '/tools',
+      MOCHA_GREP: 'activates|no-data', MOCHA_INVERT: 'true' };
     const env = isolatedEnvironment(root, parent);
     for (const key of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'COPILOT_HOME', 'TMP', 'TEMP', 'TMPDIR']) {
       expect(env[key]?.startsWith(root + path.sep)).toBe(true);
@@ -136,8 +137,12 @@ describe('desktop test fixtures', () => {
     expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
     expect(env).not.toHaveProperty('NODE_OPTIONS');
     expect(env).not.toHaveProperty('CODE_VERSION');
+    expect(env).not.toHaveProperty('MOCHA_GREP');
+    expect(env).not.toHaveProperty('MOCHA_INVERT');
     expect(env.PATH).toBe('/tools');
     expect(parent.HOME).toBe('/personal');
+    expect(parent.MOCHA_GREP).toBe('activates|no-data');
+    expect(parent.MOCHA_INVERT).toBe('true');
   });
 
   it('places fixture logs in the platform-specific discovery locations', () => {

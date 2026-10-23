@@ -44,7 +44,10 @@ export class Dashboard {
         return true;
       } catch (err: unknown) {
         if (err instanceof error.StaleElementReferenceError || err instanceof error.NoSuchFrameError
-          || err instanceof error.NoSuchElementError) return false;
+          || err instanceof error.NoSuchElementError
+          || (err instanceof Error && err.message.startsWith('WebviewMixin.switchToFrame: outer iframe became stale during frame switch.'))) {
+          return false;
+        }
         throw err;
       }
     }, READY_TIMEOUT, previousDocumentId

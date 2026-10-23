@@ -67,7 +67,8 @@ export function isolatedEnvironment(root: string, original: NodeJS.ProcessEnv): 
   };
   for (const key of Object.keys(env)) {
     if (key.startsWith('VSCODE_') || key.startsWith('NODE_')
-      || ['ELECTRON_RUN_AS_NODE', 'EXTENSION_DEV_PATH', 'EXTENSIONS_FOLDER', 'TEST_RESOURCES', 'CODE_VERSION'].includes(key)) {
+      || ['ELECTRON_RUN_AS_NODE', 'EXTENSION_DEV_PATH', 'EXTENSIONS_FOLDER', 'TEST_RESOURCES',
+        'CODE_VERSION', 'MOCHA_GREP', 'MOCHA_INVERT'].includes(key)) {
       delete env[key];
     }
   }
