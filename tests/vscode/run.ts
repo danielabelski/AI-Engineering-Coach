@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { fixturePaths, isolatedEnvironment, prepareFixtures, scenarioContext } from './fixtures';
+import { writeSnapshotReport } from './snapshots';
 
 const PROJECT = path.resolve(__dirname, '..', '..');
 const manifestSchema = z.object({
@@ -178,9 +179,12 @@ async function main(): Promise<void> {
     assert.ok(results.every(result => result.exitCode === 0), 'Desktop smoke tests failed; inspect the saved diagnostics.');
   } finally {
     try {
-      await fs.writeFile(path.join(artifacts, 'summary.json'), JSON.stringify({
+      const summary = {
         vsix, vsixHash, version, nodeVersion: process.version, platform: process.platform, arch: process.arch, results,
-      }, null, 2));
+      };
+      await fs.writeFile(path.join(artifacts, 'summary.json'), JSON.stringify(summary, null, 2));
+      await writeSnapshotReport(artifacts, summary);
+      console.log(`Desktop screenshot gallery: ${path.join(artifacts, 'gallery.html')}`);
       await copyArchives(storage, cache);
     } finally {
       await fs.rm(runRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });

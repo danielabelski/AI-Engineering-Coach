@@ -34,6 +34,7 @@ describe('Packaged VSIX with synthetic sessions', () => {
   it('activates the installed extension and renders real worker results', async () => {
     await dashboard.expectStats(INITIAL_COUNTS);
     await dashboard.waitForText('#content', 'Local Agent');
+    await dashboard.snapshot('01-dashboard', 'Dashboard: 2 sessions and 6 requests from synthetic logs');
   });
 
   it('navigates to the timeline and displays a synthetic session', async () => {
@@ -43,12 +44,14 @@ describe('Packaged VSIX with synthetic sessions', () => {
     await dashboard.click('.timeline-lane');
     await dashboard.waitForText('#timelineDetail', FIRST_PROMPT);
     await dashboard.expectHealthy();
+    await dashboard.snapshot('02-timeline', 'Timeline: synthetic session details');
   });
 
   it('loads the Output page through the real webview message bridge', async () => {
     await dashboard.navigate('output', 'Output');
     await dashboard.waitForText('#content', 'AI-Generated LoC');
     await dashboard.expectHealthy();
+    await dashboard.snapshot('03-output', 'Output: analysis through the real webview message bridge');
   });
 
   it('reloads changed files without retaining stale results or duplicating sessions', async () => {
@@ -67,11 +70,13 @@ describe('Packaged VSIX with synthetic sessions', () => {
     const runtime = await fs.readFile(log, 'utf8');
     assert.match(runtime, /\[extension\] command-reload/);
     assert.match(runtime, /\[panel\] parse-complete[^\n]*sessions=3/);
+    await dashboard.snapshot('04-reloaded', 'Reloaded twice: 3 sessions and 9 requests, without duplicates');
   });
 
   it('reopens the dashboard with the same data', async () => {
     await dashboard.close();
     await dashboard.open();
     await dashboard.expectStats(RELOADED_COUNTS);
+    await dashboard.snapshot('05-reopened', 'Reopened dashboard: the same 3 sessions and 9 requests');
   });
 });

@@ -18,5 +18,6 @@ describe('Packaged VSIX without session logs', () => {
     assert.match(runtime, /logs-dirs-found[^\n]*count=0 external=false/);
     assert.match(runtime, /loadData-no-dirs/);
     assert.doesNotMatch(runtime, /parse-complete|uncaught-exception|unhandled-rejection/);
+    await dashboard.snapshot('01-empty-state', 'Empty profile: the expected no-session-data explanation');
   });
 });

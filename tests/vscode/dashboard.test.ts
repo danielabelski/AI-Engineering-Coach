@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   switchToFrame: vi.fn<(timeout: number) => Promise<void>>(),
   documentId: vi.fn<() => Promise<string>>(),
   editorReady: vi.fn<() => Promise<boolean>>(),
+  takeScreenshot: vi.fn<() => Promise<string>>(),
+  executeScript: vi.fn<() => Promise<string>>(),
+  saveSnapshot: vi.fn<typeof import('./snapshots')['saveSnapshot']>(),
   wait: vi.fn<(condition: () => Promise<boolean>, timeout: number, message?: string) => Promise<boolean>>(),
 }));
 
@@ -23,6 +26,8 @@ vi.mock('vscode-extension-tester', async importOriginal => {
     VSBrowser: { instance: { driver: {
       switchTo: () => ({ defaultContent: mocks.defaultContent }),
       findElement: () => ({ getId: mocks.documentId }),
+      takeScreenshot: mocks.takeScreenshot,
+      executeScript: mocks.executeScript,
       wait: mocks.wait,
     } } },
     Workbench: class { executeCommand = mocks.executeCommand; },
@@ -31,6 +36,8 @@ vi.mock('vscode-extension-tester', async importOriginal => {
   };
 });
 
+vi.mock('./snapshots', () => ({ saveSnapshot: mocks.saveSnapshot }));
+
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.executeCommand.mockResolvedValue();
@@ -38,6 +45,9 @@ beforeEach(() => {
   mocks.switchToFrame.mockResolvedValue();
   mocks.documentId.mockResolvedValue('initial-document');
   mocks.editorReady.mockResolvedValue(true);
+  mocks.takeScreenshot.mockResolvedValue('captured-image');
+  mocks.executeScript.mockResolvedValue('[]');
+  mocks.saveSnapshot.mockResolvedValue();
   mocks.wait.mockImplementation(async (condition, _timeout, message) => {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (await condition()) return true;
@@ -46,7 +56,7 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('desktop webview synchronization', () => {
   it('opens the dashboard once and waits for its editor before entering the webview', async () => {
@@ -108,6 +118,46 @@ describe('desktop webview failures', () => {
     await expect(dashboard.command('Reload Data')).rejects.toThrow('replacement webview');
 
     expect(mocks.executeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  describe('desktop screenshot capture', () => {
+    it('saves the real driver image into this suite artifact directory without changing frame context', async () => {
+      vi.stubEnv('AIC_E2E_ARTIFACTS', 'isolated-artifacts');
+      await new Dashboard().snapshot('01-dashboard', 'Known session counts');
+      expect(mocks.takeScreenshot).toHaveBeenCalledTimes(1);
+      expect(mocks.saveSnapshot).toHaveBeenCalledExactlyOnceWith(
+        'isolated-artifacts', { name: '01-dashboard', title: 'Known session counts' }, 'captured-image',
+      );
+      expect(mocks.defaultContent).not.toHaveBeenCalled();
+    });
+
+    it('fails explicitly when screenshot capture fails', async () => {
+      vi.stubEnv('AIC_E2E_ARTIFACTS', 'isolated-artifacts');
+      mocks.takeScreenshot.mockRejectedValueOnce(new Error('Screenshot capture failed'));
+      await expect(new Dashboard().snapshot('01-dashboard', 'Known session counts')).rejects.toThrow('Screenshot capture failed');
+      expect(mocks.saveSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('waits for changing canvas pixels to settle before taking the screenshot', async () => {
+      vi.stubEnv('AIC_E2E_ARTIFACTS', 'isolated-artifacts');
+      mocks.executeScript.mockResolvedValueOnce('drawing').mockResolvedValue('finished');
+      await new Dashboard().snapshot('01-dashboard', 'Known session counts');
+      expect(mocks.executeScript).toHaveBeenCalledTimes(3);
+      expect(mocks.takeScreenshot.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.executeScript.mock.invocationCallOrder[2]);
+    });
+
+    it('does not capture an unsettled chart as a finished milestone', async () => {
+      vi.stubEnv('AIC_E2E_ARTIFACTS', 'isolated-artifacts');
+      mocks.executeScript.mockResolvedValueOnce('frame-1').mockResolvedValueOnce('frame-2').mockResolvedValueOnce('frame-3');
+      await expect(new Dashboard().snapshot('01-dashboard', 'Known session counts')).rejects.toThrow('Waiting for charts');
+      expect(mocks.takeScreenshot).not.toHaveBeenCalled();
+    });
+
+    it('requires isolated artifact storage before capturing', async () => {
+      vi.stubEnv('AIC_E2E_ARTIFACTS', undefined);
+      await expect(new Dashboard().snapshot('01-dashboard', 'Known session counts')).rejects.toThrow('Missing isolated');
+      expect(mocks.takeScreenshot).not.toHaveBeenCalled();
+    });
   });
 
   it('does not retry unexpected driver failures', async () => {

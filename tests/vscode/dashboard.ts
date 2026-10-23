@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { By, EditorView, error, until, VSBrowser, WebView, Workbench } from 'vscode-extension-tester';
+import { saveSnapshot } from './snapshots';
 
 const READY_TIMEOUT = 60_000;
 
@@ -53,6 +54,22 @@ export class Dashboard {
 
   async open(): Promise<void> {
     await this.command('Open Dashboard');
+  }
+
+  async snapshot(name: string, title: string): Promise<void> {
+    const artifacts = process.env.AIC_E2E_ARTIFACTS;
+    if (!artifacts) throw new Error('Missing isolated test artifact directory');
+    const driver = VSBrowser.instance.driver;
+    let previousCharts: string | undefined;
+    // Canvas animations continue after the metrics and DOM become visible.
+    await driver.wait(async () => {
+      const charts = await driver.executeScript<string>(() =>
+        JSON.stringify(Array.from(document.querySelectorAll('canvas'), canvas => canvas.toDataURL())));
+      const stable = charts === previousCharts;
+      previousCharts = charts;
+      return stable;
+    }, READY_TIMEOUT, 'Waiting for charts to finish rendering before the snapshot');
+    await saveSnapshot(artifacts, { name, title }, await driver.takeScreenshot());
   }
 
   async close(): Promise<void> {

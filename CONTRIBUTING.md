@@ -93,6 +93,19 @@ screenshots, and a package-hash summary. Browser traces, screenshots, and the HT
 are stored separately under `test-results/browser` and `test-results/browser-report`.
 GitHub Actions uploads these diagnostics even when a test fails.
 
+Successful milestones also capture real VS Code screenshots: the initial dashboard, Timeline
+session details, Output, reload, reopening, and the expected empty-data state. In a GitHub Actions
+run, open the **Summary** and follow **Download screenshots and test diagnostics**. Extract the
+artifact, then open `vscode/<run>/gallery.html`; its images are embedded, so it works offline.
+The gallery includes captions, suite outcomes, the editor target, and the tested VSIX hash.
+Individual PNGs are in each suite's `snapshots` directory. Locally, the same gallery is under
+`test-results/vscode/<run>/gallery.html`.
+
+These screenshots document the synthetic-data run, not pixel-comparison baselines. The capture
+helper waits for chart pixels to settle so it does not show an in-progress animation. Captures
+are preserved even if a later assertion fails; the report still marks that suite as failed.
+Existing automatic failure screenshots remain separate.
+
 ### Maintaining regression coverage
 
 Add the regression test in the same PR as the feature or fix. Prefer the smallest layer that
@@ -106,6 +119,8 @@ each file gets a separate process, profile, and baseline synthetic data. `empty.
 no-data exception. Reuse the [`Dashboard`](tests/vscode/dashboard.ts) helper and small synthetic
 fixtures. Keep selectors in the helper, wait for observable readiness instead of fixed sleeps,
 and assert exact results.
+After a meaningful assertion, use `await dashboard.snapshot('01-feature', 'What the screenshot demonstrates')`
+to add a named milestone to the gallery. Use a unique lowercase, hyphenated name within each suite.
 The desktop suite is sequential, has no automatic test retries, and rejects focused, skipped, or
 empty test runs. Reload replaces the webview's inner frame, so the dashboard helper waits for a
 different document and reacquires detached frames within a single deadline. It does not repeat
