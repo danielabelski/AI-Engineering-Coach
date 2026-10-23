@@ -8,7 +8,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addReloadFixture, assertFixturesUnchanged, fixtureFiles, fixturePaths, isolatedEnvironment, prepareFixtures,
+  addReloadFixture, assertFixturesUnchanged, exportFixtureDataset, fixtureDatasetSchema,
+  fixtureFiles, fixturePaths, isolatedEnvironment, prepareFixtures,
 } from './fixtures';
 import { discoverSuites, vscodeVersion } from './run';
 
@@ -31,15 +32,80 @@ describe('desktop test fixtures', () => {
     const { findLogsDirs, parseAllLogs } = await import('../../src/core/parser');
     expect(findLogsDirs()).toEqual([fixturePaths(root).logs]);
     const initial = parseAllLogs(findLogsDirs());
-    expect(initial.sessions).toHaveLength(2);
-    expect(initial.sessions.reduce((sum, session) => sum + session.requests.length, 0)).toBe(6);
-    expect(initial.workspaces.size).toBe(2);
+    expect(initial.sessions).toHaveLength(21);
+    expect(initial.sessions.reduce((sum, session) => sum + session.requests.length, 0)).toBe(63);
+    expect(initial.workspaces.size).toBe(3);
     await assertFixturesUnchanged(root, timestamp);
     await addReloadFixture(root, timestamp);
     const reloaded = parseAllLogs(findLogsDirs());
-    expect(reloaded.sessions).toHaveLength(3);
-    expect(reloaded.sessions.reduce((sum, session) => sum + session.requests.length, 0)).toBe(9);
+    expect(reloaded.sessions).toHaveLength(22);
+    expect(reloaded.sessions.reduce((sum, session) => sum + session.requests.length, 0)).toBe(66);
     await assertFixturesUnchanged(root, timestamp, true);
+  });
+
+  describe('multi-project fixture analytics', () => {
+    it('counts real edit operations without double-counting code repeated in responses', async () => {
+      await prepareFixtures(root, timestamp, true);
+      const { parseAllLogs } = await import('../../src/core/parser');
+      const { Analyzer } = await import('../../src/core/analyzer');
+      const parsed = parseAllLogs([fixturePaths(root).logs]);
+      const analyzer = new Analyzer(parsed.sessions, parsed.editLocIndex, parsed.workspaces);
+      const production = analyzer.getCodeProduction();
+      expect(parsed.editLocIndex.size).toBe(42);
+      expect(production.summary).toMatchObject({ totalAiLoc: 315, totalRemovedAiLoc: 21, totalNetAiLoc: 294 });
+      expect(production.byLanguage.labels.slice().sort()).toEqual(['go', 'python', 'typescript']);
+      expect(production.byLanguage.aiLoc).toEqual([105, 105, 105]);
+      expect(analyzer.getDailyActivity().loc).toEqual([45, 45, 45, 45, 45, 45, 45]);
+      await addReloadFixture(root, timestamp);
+      const reloaded = parseAllLogs([fixturePaths(root).logs]);
+      expect(new Analyzer(reloaded.sessions, reloaded.editLocIndex, reloaded.workspaces).getCodeProduction().summary)
+        .toMatchObject({ totalAiLoc: 330, totalRemovedAiLoc: 22, totalNetAiLoc: 308 });
+    });
+
+    it('populates all seven days, overlapping timeline sessions, and three project summaries', async () => {
+      await prepareFixtures(root, timestamp, true);
+      const { parseAllLogs } = await import('../../src/core/parser');
+      const { Analyzer } = await import('../../src/core/analyzer');
+      const parsed = parseAllLogs([fixturePaths(root).logs]);
+      const analyzer = new Analyzer(parsed.sessions, parsed.editLocIndex, parsed.workspaces);
+      expect(analyzer.getHeatmap().heatmap.flat().filter(value => value > 0)).toEqual([9, 9, 9, 9, 9, 9, 9]);
+      expect(analyzer.getWorkLifeBalance()).toMatchObject({ totalRequests: 63, weekdayReqs: 45, weekendReqs: 18, activeDays: 7 });
+      expect(analyzer.getDayTimeline()).toMatchObject({ sessionCount: 3, maxConcurrent: 3 });
+      const projects = analyzer.getProjectOverview().projects;
+      expect(projects.map(project => project.workspaceName).sort()).toEqual(['inventory-api', 'release-worker', 'sensor-pipeline']);
+      expect(projects.map(project => project.totalRequests)).toEqual([21, 21, 21]);
+      expect(projects.map(project => project.estimatedLoc)).toEqual([105, 105, 105]);
+    });
+  });
+
+  describe('published synthetic dataset', () => {
+    it('exports the actual initial inputs separately from the planned reload addition', async () => {
+      await prepareFixtures(root, timestamp, true);
+      const artifacts = path.join(root, 'artifacts');
+      await exportFixtureDataset(root, timestamp, artifacts, true);
+      const summary = fixtureDatasetSchema.parse(JSON.parse(await fs.readFile(path.join(artifacts, 'dataset.json'), 'utf8')));
+      expect(summary).toMatchObject({
+        synthetic: true, activeDays: 7, initial: { sessions: 21, requests: 63, aiLoc: 315, netAiLoc: 294 },
+        afterReload: { sessions: 22, requests: 66, aiLoc: 330, netAiLoc: 308 },
+        inputFiles: { initial: 45, reload: 2 },
+      });
+      for (const [file, content] of fixtureFiles(root, timestamp)) {
+        expect(await fs.readFile(path.join(artifacts, 'fixtures', 'initial', path.relative(fixturePaths(root).logs, file)), 'utf8'))
+          .toBe(content);
+      }
+      await assertFixturesUnchanged(root, timestamp);
+      expect(await fs.readdir(path.join(artifacts, 'fixtures', 'reload', 'inventory-api', 'chatSessions')))
+        .toEqual(['inventory-api-reload.json']);
+    });
+
+    it('makes the deliberately empty scenario explicit in its dataset manifest', async () => {
+      await prepareFixtures(root, timestamp, false);
+      const artifacts = path.join(root, 'artifacts');
+      await exportFixtureDataset(root, timestamp, artifacts, false);
+      const summary = fixtureDatasetSchema.parse(JSON.parse(await fs.readFile(path.join(artifacts, 'dataset.json'), 'utf8')));
+      expect(summary).toMatchObject({ projects: [], activeDays: 0, initial: { sessions: 0, requests: 0, aiLoc: 0 }, afterReload: null });
+      expect(await fs.readdir(path.join(artifacts, 'fixtures'))).toEqual(['projects.json']);
+    });
   });
 
   it('does not create a discoverable source for the empty scenario', async () => {

@@ -4,13 +4,51 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { z } from 'zod';
 
-export const INITIAL_COUNTS = { Requests: '6', Sessions: '2', Workspaces: '2' };
-export const RELOADED_COUNTS = { Requests: '9', Sessions: '3', Workspaces: '2' };
-export const FIRST_PROMPT = 'Explain how the synthetic API handles a missing item.';
+const DATASET_SOURCE = path.resolve(__dirname, '..', '..', 'tests', 'vscode', 'data', 'projects.json');
+const projectSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  language: z.enum(['typescript', 'python', 'go']),
+  modelId: z.string(),
+  sourceFile: z.string().regex(/^[a-z][a-z0-9_.]*$/),
+  testFile: z.string().regex(/^[a-z][a-z0-9_.]*$/),
+  prompts: z.tuple([z.string(), z.string(), z.string()]),
+  source: z.array(z.string()).min(1),
+  revised: z.array(z.string()).min(1),
+  tests: z.array(z.string()).min(1),
+});
+const dataset = z.object({
+  description: z.string(),
+  schedule: z.array(z.object({
+    daysAgo: z.number().int().min(0).max(6),
+    hour: z.number().int().min(0).max(22),
+    topic: z.string(),
+  })).min(1),
+  projects: z.array(projectSchema).min(1),
+}).parse(JSON.parse(readFileSync(DATASET_SOURCE, 'utf8')));
+type Project = z.infer<typeof projectSchema>;
+
+export const INITIAL_COUNTS = { Requests: '63', Sessions: '21', 'AI LoC': '315', Workspaces: '3' };
+export const RELOADED_COUNTS = { Requests: '66', Sessions: '22', 'AI LoC': '330', Workspaces: '3' };
+export const INITIAL_NET_LOC = 294;
+export const PROJECT_NAMES = dataset.projects.map(project => project.id);
+export const FIRST_PROMPT = `${dataset.projects[0].prompts[0]} Task: ${dataset.schedule[0].topic}.`;
+
+const totalsSchema = z.object({ sessions: z.number(), requests: z.number(), aiLoc: z.number(), netAiLoc: z.number() });
+export const fixtureDatasetSchema = z.object({
+  source: z.literal('tests/vscode/data/projects.json'),
+  synthetic: z.literal(true),
+  projects: z.array(z.object({ name: z.string(), language: z.string(), model: z.string() })),
+  activeDays: z.number(),
+  initial: totalsSchema,
+  afterReload: totalsSchema.nullable(),
+  inputFiles: z.object({ initial: z.number(), reload: z.number() }),
+});
 
 export function isolatedEnvironment(root: string, original: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const home = path.join(root, 'home');
@@ -51,38 +89,76 @@ export function fixturePaths(root: string, platform: NodeJS.Platform = process.p
   };
 }
 
-function sessionJson(id: string, timestamp: number, firstPrompt: string): string {
-  const prompts = [firstPrompt, 'Add a deterministic test for the missing item.', 'Explain the test result.'];
-  return JSON.stringify({
-    sessionId: id,
-    customTitle: id,
-    creationDate: timestamp,
-    lastMessageDate: timestamp + 120_000,
-    requests: prompts.map((text, index) => ({
-      requestId: `${id}-request-${index}`,
-      timestamp: timestamp + index * 60_000,
-      message: { text },
-      response: [{ value: `Synthetic answer ${index + 1}: the example is handled without external services.` }],
-      modelId: 'gpt-4o',
-      result: { timings: { firstProgress: 100, totalElapsed: 500 }, metadata: {} },
-    })),
-  }, null, 2) + '\n';
+function scheduledTime(anchor: number, daysAgo: number, hour: number, projectIndex: number): number {
+  const date = new Date(anchor);
+  date.setDate(date.getDate() - daysAgo);
+  date.setHours(hour, projectIndex * 5, 0, 0);
+  return date.getTime();
+}
+
+function addSessionFiles(
+  files: Map<string, string>,
+  root: string,
+  project: Project,
+  session: { id: string; timestamp: number; topic: string },
+): void {
+  const { home, logs } = fixturePaths(root);
+  const sourceUri = pathToFileURL(path.join(home, 'workspaces', project.id, 'src', session.id, project.sourceFile)).href;
+  const testUri = pathToFileURL(path.join(home, 'workspaces', project.id, 'src', session.id, project.testFile)).href;
+  const source = project.source.join('\n') + '\n';
+  const revised = project.revised.join('\n') + '\n';
+  const tests = project.tests.join('\n') + '\n';
+  const responses = [
+    `Use a small local fixture for ${session.topic}, implement the function, then verify the boundary with tests.`,
+    `Implemented the synthetic example:\n\`\`\`${project.language}\n${source}\`\`\``,
+    `Corrected the boundary and added tests:\n\`\`\`${project.language}\n${revised}\`\`\`\n\`\`\`${project.language}\n${tests}\`\`\``,
+  ];
+  const requests = project.prompts.map((prompt, index) => ({
+    requestId: `${session.id}-request-${index}`,
+    timestamp: session.timestamp + [0, 7, 18][index] * 60_000,
+    message: { text: `${prompt} Task: ${session.topic}.` },
+    response: [{ value: responses[index] }],
+    modelId: project.modelId,
+    agent: { extensionDisplayName: 'Synthetic coding agent', id: 'agent' },
+    editedFileEvents: index === 0 ? [] : (index === 1 ? [sourceUri] : [sourceUri, testUri]).map(uri => ({ uri: { path: new URL(uri).pathname } })),
+    result: {
+      timings: { firstProgress: 250, totalElapsed: 2_000 + index * 500 },
+      metadata: { toolCallRounds: [{ toolCalls: (index === 0 ? ['read_file'] : index === 1
+        ? ['create_file'] : ['replace_string_in_file', 'create_file', 'run_in_terminal']).map(name => ({ name })) }] },
+    },
+  }));
+  files.set(path.join(logs, project.id, 'chatSessions', `${session.id}.json`), JSON.stringify({
+    sessionId: session.id, customTitle: `${project.id}: ${session.topic}`,
+    creationDate: session.timestamp, lastMessageDate: requests[2].timestamp, requests,
+  }, null, 2) + '\n');
+  files.set(path.join(logs, project.id, 'chatEditingSessions', session.id, 'state.json'), JSON.stringify({
+    timeline: { operations: [
+      { type: 'create', requestId: requests[1].requestId, uri: { external: sourceUri }, epoch: 1, initialContent: source },
+      { type: 'textEdit', requestId: requests[2].requestId, uri: { external: sourceUri }, epoch: 2,
+        edits: [{ range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1_000_000, endColumn: 1 }, text: revised }] },
+      { type: 'create', requestId: requests[2].requestId, uri: { external: testUri }, epoch: 3, initialContent: tests },
+    ] },
+  }, null, 2) + '\n');
 }
 
 export function fixtureFiles(root: string, timestamp: number, reloaded = false): Map<string, string> {
   const { home, logs } = fixturePaths(root);
   const files = new Map<string, string>();
-  for (const [index, name] of ['smoke-api', 'smoke-ui'].entries()) {
-    const workspace = path.join(home, 'workspaces', name);
-    files.set(path.join(logs, name, 'workspace.json'), JSON.stringify({ folder: pathToFileURL(workspace).href }) + '\n');
-    files.set(
-      path.join(logs, name, 'chatSessions', `${name}.json`),
-      sessionJson(name, timestamp + index * 600_000, index === 0 ? FIRST_PROMPT : 'Explain the synthetic dashboard.'),
-    );
+  for (const [index, project] of dataset.projects.entries()) {
+    const workspace = path.join(home, 'workspaces', project.id);
+    files.set(path.join(logs, project.id, 'workspace.json'), JSON.stringify({ folder: pathToFileURL(workspace).href }) + '\n');
+    for (const schedule of dataset.schedule) {
+      addSessionFiles(files, root, project, {
+        id: `${project.id}-day-${schedule.daysAgo}`,
+        timestamp: scheduledTime(timestamp, schedule.daysAgo, schedule.hour, index),
+        topic: schedule.topic,
+      });
+    }
   }
   if (reloaded) {
-    files.set(path.join(logs, 'smoke-api', 'chatSessions', 'smoke-reload.json'),
-      sessionJson('smoke-reload', timestamp + 1_200_000, 'Verify that reloading discovers this new synthetic session.'));
+    addSessionFiles(files, root, dataset.projects[0], {
+      id: 'inventory-api-reload', timestamp: scheduledTime(timestamp, 0, 18, 0), topic: 'reload regression',
+    });
   }
   return files;
 }
@@ -92,8 +168,7 @@ export async function prepareFixtures(root: string, timestamp: number, populated
   await Promise.all([
     fs.mkdir(workspace, { recursive: true }),
     fs.mkdir(path.join(root, 'tmp'), { recursive: true }),
-    fs.mkdir(path.join(home, 'workspaces', 'smoke-api'), { recursive: true }),
-    fs.mkdir(path.join(home, 'workspaces', 'smoke-ui'), { recursive: true }),
+    ...PROJECT_NAMES.map(name => fs.mkdir(path.join(home, 'workspaces', name), { recursive: true })),
   ]);
   if (!populated) return;
   for (const [file, content] of fixtureFiles(root, timestamp)) {
@@ -125,8 +200,38 @@ export async function addReloadFixture(root: string, timestamp: number): Promise
   await assertFixturesUnchanged(root, timestamp);
   const original = fixtureFiles(root, timestamp);
   for (const [file, content] of fixtureFiles(root, timestamp, true)) {
-    if (!original.has(file)) await fs.writeFile(file, content, { flag: 'wx' });
+    if (!original.has(file)) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, content, { flag: 'wx' });
+    }
   }
+}
+
+export async function exportFixtureDataset(root: string, timestamp: number, artifacts: string, populated: boolean): Promise<void> {
+  const initial = populated ? fixtureFiles(root, timestamp) : new Map<string, string>();
+  const full = populated ? fixtureFiles(root, timestamp, true) : new Map<string, string>();
+  for (const [file, content] of full) {
+    const stage = initial.has(file) ? 'initial' : 'reload';
+    const target = path.join(artifacts, 'fixtures', stage, path.relative(fixturePaths(root).logs, file));
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    if (stage === 'initial') await fs.copyFile(file, target);
+    else await fs.writeFile(target, content);
+  }
+  await fs.mkdir(path.join(artifacts, 'fixtures'), { recursive: true });
+  await fs.copyFile(DATASET_SOURCE, path.join(artifacts, 'fixtures', 'projects.json'));
+  const summary = fixtureDatasetSchema.parse({
+    source: 'tests/vscode/data/projects.json', synthetic: true,
+    projects: populated ? dataset.projects.map(project => ({ name: project.id, language: project.language, model: project.modelId })) : [],
+    activeDays: populated ? dataset.schedule.length : 0,
+    initial: populated ? { sessions: 21, requests: 63, aiLoc: 315, netAiLoc: INITIAL_NET_LOC }
+      : { sessions: 0, requests: 0, aiLoc: 0, netAiLoc: 0 },
+    afterReload: populated ? { sessions: 22, requests: 66, aiLoc: 330, netAiLoc: 308 } : null,
+    inputFiles: { initial: initial.size, reload: full.size - initial.size },
+  });
+  await fs.writeFile(path.join(artifacts, 'dataset.json'), JSON.stringify(summary, null, 2) + '\n');
+  console.log(`Synthetic dataset: ${summary.projects.length} projects, ${summary.initial.sessions} sessions, ` +
+    `${summary.initial.requests} requests, ${summary.initial.aiLoc} AI LoC across ${summary.activeDays} days.`);
+  console.log(`Fixture definitions: ${summary.source}; raw synthetic inputs: ${path.join(artifacts, 'fixtures')}`);
 }
 
 export function scenarioContext(): { root: string; timestamp: number } {

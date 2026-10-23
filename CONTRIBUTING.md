@@ -73,15 +73,25 @@ requirement to accommodate the runner. Dependency updates use the existing Depen
 
 ### Synthetic data and isolation
 
-[`tests/vscode/fixtures.ts`](tests/vscode/fixtures.ts) creates raw VS Code session JSON in the
-platform's normal discovery layout, entirely inside a fresh temporary home. Two workspaces
-initially contain two sessions and six requests. The reload test adds one synthetic session,
-then verifies three sessions and nine requests, including a second reload without duplicates.
-The empty-data scenario starts a separate process with a fresh home and no session sources.
+The checked-in data is [`tests/vscode/data/projects.json`](tests/vscode/data/projects.json):
+fictional project names, prompts, source code, tests, model IDs, and a seven-day activity schedule.
+It is entirely synthetic, not sampled or anonymized from anyone's personal logs. Three projects
+cover TypeScript (`inventory-api`), Python (`sensor-pipeline`), and Go (`release-worker`).
 
-The data structure and prompts are deterministic; timestamps are anchored to noon on the
-previous day so date-based views do not age out. The unit suite checks the raw data through
-the real parser. Desktop tests do not replace the parser, workers, VS Code API, or message bridge.
+[`tests/vscode/fixtures.ts`](tests/vscode/fixtures.ts) materializes those definitions into raw
+`chatSessions` and `chatEditingSessions` JSON in the platform's normal discovery layout,
+entirely inside a fresh temporary home. Initially there are **21 sessions, 63 requests, 315 added
+lines and 294 net lines** across seven active days, including weekday, weekend and evening activity.
+Each session records file creation, a one-line correction, and test creation; the same code also
+appears in responses to exercise edit/code-block deduplication. The reload test adds one session,
+then verifies **22 sessions, 66 requests and 330 added lines**, including a second reload without
+duplicates. The empty-data scenario starts a separate process with no session sources.
+
+The data is varied but deterministic rather than randomly changing on every build. The most
+recent activity day is the day before the run, with earlier days and local hours taken from the
+schedule, so charts remain populated. The unit suite checks exact code totals, all seven heatmap
+days, overlapping Timeline sessions, and the three project summaries through the real parser
+and analyzers. Desktop tests do not replace the parser, workers, VS Code API, or message bridge.
 They also check that input log files remain byte-for-byte unchanged except for the test's
 explicit addition. Personal home, AppData, Copilot data, temporary directories, extension
 directories, and VS Code profiles are isolated; no sign-in or live model call is required.
@@ -93,11 +103,18 @@ screenshots, and a package-hash summary. Browser traces, screenshots, and the HT
 are stored separately under `test-results/browser` and `test-results/browser-report`.
 GitHub Actions uploads these diagnostics even when a test fails.
 
-Successful milestones also capture real VS Code screenshots: the initial dashboard, Timeline
-session details, Output, reload, reopening, and the expected empty-data state. In a GitHub Actions
+The pipeline logs the generated counts and includes a **Synthetic test data** section in its
+summary and gallery. Downloaded artifacts include each suite's `dataset.json`, the checked-in
+definitions under `fixtures/projects.json`, the actual initial input copies under
+`fixtures/initial`, and the planned additional files under `fixtures/reload`. These are generated
+test inputs, not user logs; the reload files are kept separate from the initial dataset.
+
+Successful milestones also capture real VS Code screenshots: dashboard totals and activity, Timeline
+session details, nonzero Output by project, Patterns Work Hours and Projects, reload, reopening,
+and the expected empty-data state. In a GitHub Actions
 run, open the **Summary** and follow **Download screenshots and test diagnostics**. Extract the
 artifact, then open `vscode/<run>/gallery.html`; its images are embedded, so it works offline.
-The gallery includes captions, suite outcomes, the editor target, and the tested VSIX hash.
+The gallery includes captions, suite outcomes, dataset counts, the editor target, and the tested VSIX hash.
 Individual PNGs are in each suite's `snapshots` directory. Locally, the same gallery is under
 `test-results/vscode/<run>/gallery.html`.
 

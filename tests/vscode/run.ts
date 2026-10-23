@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
-import { fixturePaths, isolatedEnvironment, prepareFixtures, scenarioContext } from './fixtures';
+import { exportFixtureDataset, fixturePaths, isolatedEnvironment, prepareFixtures, scenarioContext } from './fixtures';
 import { writeSnapshotReport } from './snapshots';
 
 const PROJECT = path.resolve(__dirname, '..', '..');
@@ -88,6 +88,7 @@ async function runWorker(vsix: string, version: string, scenario: string): Promi
   if (!storage || !artifacts) throw new Error('Missing test storage/artifact directories');
   await prepareFixtures(root, timestamp, scenario !== 'empty');
   await fs.mkdir(artifacts, { recursive: true });
+  await exportFixtureDataset(root, timestamp, artifacts, scenario !== 'empty');
   const config = path.join(root, 'mocha.json');
   const settings = path.join(root, 'settings.json');
   await fs.writeFile(config, JSON.stringify({

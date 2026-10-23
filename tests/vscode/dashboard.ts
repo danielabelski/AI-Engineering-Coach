@@ -98,6 +98,18 @@ export class Dashboard {
     }, READY_TIMEOUT, `Expected ${selector} to ${exact ? 'equal' : 'contain'} ${JSON.stringify(expected)}`);
   }
 
+  async expectCount(selector: string, expected: number): Promise<void> {
+    await VSBrowser.instance.driver.wait(async () =>
+      (await this.webview.findWebElements(By.css(selector))).length === expected,
+    READY_TIMEOUT, `Expected ${expected} elements matching ${selector}`);
+  }
+
+  async scrollTo(selector: string): Promise<void> {
+    const element = await this.webview.findWebElement(By.css(selector));
+    await VSBrowser.instance.driver.executeScript((target: HTMLElement) =>
+      target.scrollIntoView({ block: 'center', behavior: 'instant' }), element);
+  }
+
   async click(selector: string): Promise<void> {
     await VSBrowser.instance.driver.wait(async () => {
       const elements = await this.webview.findWebElements(By.css(selector));

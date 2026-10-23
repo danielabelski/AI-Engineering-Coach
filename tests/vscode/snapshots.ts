@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
+import { fixtureDatasetSchema } from './fixtures';
 
 const safeName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
 const snapshotSchema = z.object({ name: safeName, title: z.string().min(1) });
@@ -56,7 +57,31 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
-function galleryHtml(run: SnapshotRun, snapshots: GallerySnapshot[], outcomes: string): string {
+async function datasetHtml(artifacts: string, scenario: string): Promise<string> {
+  const file = path.join(artifacts, safeName.parse(scenario), 'dataset.json');
+  let content: string;
+  try {
+    content = await fs.readFile(file, 'utf8');
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return '';
+    throw err;
+  }
+  const dataset = fixtureDatasetSchema.parse(JSON.parse(content));
+  const projects = dataset.projects.map(project =>
+    `${escapeHtml(project.name)} (${escapeHtml(project.language)})`).join(', ');
+  return `<li><strong>${escapeHtml(scenario)}</strong>: ${dataset.projects.length} projects, ` +
+    `${dataset.initial.sessions} sessions, ${dataset.initial.requests} requests, ${dataset.initial.aiLoc} AI LoC ` +
+    `(${dataset.initial.netAiLoc} net) across ${dataset.activeDays} active days.` +
+    `${projects ? `<br>Projects: ${projects}.` : '<br>Deliberately empty profile.'}` +
+    `${dataset.afterReload ? `<br>After the planned reload addition: ${dataset.afterReload.sessions} sessions, ` +
+      `${dataset.afterReload.requests} requests, ${dataset.afterReload.aiLoc} AI LoC (${dataset.afterReload.netAiLoc} net).` : ''}` +
+    (dataset.inputFiles.initial > 0
+      ? `<br>Raw inputs: <code>${escapeHtml(scenario)}/fixtures/initial</code>; ` +
+        `planned reload files: <code>${escapeHtml(scenario)}/fixtures/reload</code>.`
+      : '<br>No session input files are seeded for this scenario.') + '</li>';
+}
+
+function galleryHtml(run: SnapshotRun, snapshots: GallerySnapshot[], outcomes: string, datasets: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -79,6 +104,7 @@ figcaption { margin-bottom: 1rem; } img { display: block; width: 100%; height: a
 A later failure still makes the suite fail.</p>
 <h2>Suite results</h2>
 <ul>${outcomes}</ul>
+${datasets}
 ${snapshots.length === 0 ? '<p>No snapshots were captured. Inspect the test logs for startup or assertion failures.</p>'
     : snapshots.map(snapshot => `<figure>
 <figcaption><strong>${escapeHtml(snapshot.title)}</strong><br><small>${escapeHtml(snapshot.scenario)} / ${escapeHtml(snapshot.name)}</small></figcaption>
@@ -95,12 +121,19 @@ export async function writeSnapshotReport(artifacts: string, run: SnapshotRun): 
     const count = snapshots.filter(snapshot => snapshot.scenario === result.scenario).length;
     return `<li><strong>${escapeHtml(result.scenario)}</strong>: ${result.exitCode === 0 ? 'Passed' : 'Failed'}; ${count} snapshot${count === 1 ? '' : 's'}</li>`;
   }).join('\n') || '<li>No suites completed.</li>';
-  await fs.writeFile(path.join(artifacts, 'gallery.html'), galleryHtml(run, snapshots, outcomes));
+  const datasetRows = (await Promise.all(run.results.map(result => datasetHtml(artifacts, result.scenario)))).join('\n');
+  const datasets = datasetRows.trim() ? `<h2>Synthetic test data</h2>
+<p>Fully synthetic; no personal logs were read. Definitions: <code>tests/vscode/data/projects.json</code>.
+Raw input copies and the planned reload addition are included in the artifact, alongside each suite's <code>dataset.json</code>.</p>
+<ul>${datasetRows}</ul>` : '';
+  await fs.writeFile(path.join(artifacts, 'gallery.html'), galleryHtml(run, snapshots, outcomes, datasets));
   await fs.writeFile(path.join(artifacts, 'snapshots.md'), `## VS Code smoke snapshots
 
 VS Code target: <code>${escapeHtml(run.version)}</code> on <code>${escapeHtml(run.platform)}</code>.
 
 <ul>${outcomes}</ul>
+
+${datasets}
 
 ${snapshots.length} milestone screenshots captured. Suite results above include failures after a capture.
 `);

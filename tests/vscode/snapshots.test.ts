@@ -10,6 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot, writeSnapshotReport } from './snapshots';
+import { exportFixtureDataset, prepareFixtures } from './fixtures';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jGz8AAAAASUVORK5CYII=';
 const snapshot = { name: '01-dashboard', title: 'Dashboard: 2 sessions and 6 requests' };
@@ -70,6 +71,27 @@ describe('desktop screenshot report', () => {
     });
     expect(await fs.readFile(path.join(root, 'gallery.html'), 'utf8')).toContain('No snapshots were captured');
     expect(await fs.readFile(path.join(root, 'snapshots.md'), 'utf8')).toContain('Failed; 0 snapshots');
+  });
+
+  it('makes the checked-in dataset and generated raw inputs visible in the gallery and CI summary', async () => {
+    const scenarioRoot = path.join(root, 'scenario');
+    const timestamp = Date.UTC(2026, 0, 15, 12);
+    await prepareFixtures(scenarioRoot, timestamp, true);
+    await exportFixtureDataset(scenarioRoot, timestamp, path.join(root, 'populated'), true);
+    await writeSnapshotReport(root, {
+      version: '1.125.0', platform: 'linux', vsixHash: 'abc123',
+      results: [{ scenario: 'populated', exitCode: 0 }],
+    });
+    for (const name of ['gallery.html', 'snapshots.md']) {
+      const report = await fs.readFile(path.join(root, name), 'utf8');
+      expect(report).toContain('3 projects, 21 sessions, 63 requests, 315 AI LoC');
+      expect(report).toContain('inventory-api (typescript)');
+      expect(report).toContain('sensor-pipeline (python)');
+      expect(report).toContain('release-worker (go)');
+      expect(report).toContain('tests/vscode/data/projects.json');
+      expect(report).toContain('populated/fixtures/initial');
+      expect(report).toContain('no personal logs were read');
+    }
   });
 
   it('surfaces a missing captured PNG rather than generating a broken image', async () => {
