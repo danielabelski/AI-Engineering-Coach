@@ -14,13 +14,41 @@ export class Dashboard {
     return this.currentWebview ??= new WebView();
   }
 
-  async command(title: string): Promise<void> {
-    await VSBrowser.instance.driver.switchTo().defaultContent();
+  async command(title: 'Open Dashboard' | 'Reload Data'): Promise<void> {
+    const driver = VSBrowser.instance.driver;
+    const previousDocumentId = title === 'Reload Data' && this.currentWebview
+      ? await driver.findElement(By.css('html')).getId()
+      : undefined;
+    await driver.switchTo().defaultContent();
     await new Workbench().executeCommand(`AI Engineer Coach: ${title}`);
     // Page-object constructors resolve immediately; wait until the editor exists first.
-    await VSBrowser.instance.driver.wait(until.elementLocated(By.css('.editor-instance')), READY_TIMEOUT);
-    this.currentWebview = new WebView();
-    await this.webview.switchToFrame(READY_TIMEOUT);
+    await driver.wait(until.elementLocated(By.css('.editor-instance')), READY_TIMEOUT);
+    await this.waitForWebview(previousDocumentId);
+  }
+
+  private async waitForWebview(previousDocumentId?: string): Promise<void> {
+    const driver = VSBrowser.instance.driver;
+    const deadline = Date.now() + READY_TIMEOUT;
+    await driver.wait(async () => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      // Reload replaces the inner iframe; reacquire it from the workbench on each poll.
+      await driver.switchTo().defaultContent();
+      try {
+        const webview = new WebView();
+        await webview.switchToFrame(remaining);
+        const documentId = await driver.findElement(By.css('html')).getId();
+        if (documentId === previousDocumentId) return false;
+        this.currentWebview = webview;
+        return true;
+      } catch (err: unknown) {
+        if (err instanceof error.StaleElementReferenceError || err instanceof error.NoSuchFrameError
+          || err instanceof error.NoSuchElementError) return false;
+        throw err;
+      }
+    }, READY_TIMEOUT, previousDocumentId
+      ? 'Waiting for the replacement webview after reload'
+      : 'Waiting for the dashboard webview');
   }
 
   async open(): Promise<void> {

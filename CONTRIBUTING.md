@@ -106,8 +106,10 @@ each file gets a separate process, profile, and baseline synthetic data. `empty.
 no-data exception. Reuse the [`Dashboard`](tests/vscode/dashboard.ts) helper and small synthetic
 fixtures. Keep selectors in the helper, wait for observable readiness instead of fixed sleeps,
 and assert exact results.
-The desktop suite is sequential, has no automatic retries, and rejects focused, skipped, or
-empty test runs.
+The desktop suite is sequential, has no automatic test retries, and rejects focused, skipped, or
+empty test runs. Reload replaces the webview's inner frame, so the dashboard helper waits for a
+different document and reacquires detached frames within a single deadline. It does not repeat
+the reload command or suppress unexpected driver failures.
 Its TypeScript and fixture tests are included in `npm run check`.
 
 Use the shared [E2E action](.github/actions/e2e/action.yml) for pipeline changes so PR, release,
